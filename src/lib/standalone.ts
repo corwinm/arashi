@@ -1,5 +1,6 @@
 import { access, realpath, rmdir } from "fs/promises";
 import { dirname, join, relative, resolve } from "path";
+import { standaloneIgnoreLayout } from "./worktree-location.ts";
 import { exec } from "./git.ts";
 import { parseGitIgnoreVerbose } from "./git-ignore.ts";
 import {
@@ -24,9 +25,9 @@ export class StandaloneDestinationNotIgnoredError extends Error {
     mutation: { branch: false; config: false; ignore: false; worktree: false };
     repairCommands: string[];
   };
-  constructor(destination: string) {
+  constructor(destination: string, ignoreRule = ".worktrees/") {
     super(
-      `Standalone worktree destination is not ignored: ${destination}. Run "arashi init --zero-config" or add .worktrees/ to the repository-local exclude file.`,
+      `Standalone worktree destination is not ignored: ${destination}. Run "arashi init --zero-config" or add ${ignoreRule} to the repository-local exclude file.`,
     );
     this.destination = destination;
     this.details = {
@@ -34,10 +35,7 @@ export class StandaloneDestinationNotIgnoredError extends Error {
       effectiveIgnore: { ignored: false, pattern: null, source: null },
       mode: "standalone",
       mutation: { branch: false, config: false, ignore: false, worktree: false },
-      repairCommands: [
-        "arashi init --zero-config",
-        "printf '.worktrees/\\n' >> \"$(git rev-parse --git-path info/exclude)\"",
-      ],
+      repairCommands: ["arashi init --zero-config"],
     };
     this.name = "StandaloneDestinationNotIgnoredError";
   }
@@ -341,9 +339,34 @@ export async function createStandaloneWorktree(
       `Standalone repository is missing immutable create-base plan entry for '${context.mainRoot}'`,
     );
   }
-  const destination = join(context.mainRoot, ".worktrees", ...branch.split("/"));
-  const effectiveIgnore = await inspectStandaloneIgnore(context, destination);
-  if (!effectiveIgnore.ignored) throw new StandaloneDestinationNotIgnoredError(destination);
+  const worktreesBase =
+    context.effective?.worktreesBase ??
+    resolve(context.mainRoot, context.config.worktreesDir ?? ".worktrees");
+  const branchComponent =
+    context.config.worktreeNaming?.branchSlashes === "flatten"
+      ? branch.replaceAll("/", "-")
+      : branch;
+  const namespace =
+    context.config.worktreeNaming?.style === "repo-branch"
+      ? `${context.repository.name}-${branchComponent}`
+      : branchComponent;
+  const destination = join(worktreesBase, ...namespace.split("/"));
+  const { applicable: baseIsInsideRepository, rule: ignoreRule } = standaloneIgnoreLayout(
+    context.mainRoot,
+    worktreesBase,
+  );
+  const effectiveIgnore = baseIsInsideRepository
+    ? await inspectStandaloneIgnore(context, destination)
+    : { ignored: true, pattern: null, source: null };
+  if (!effectiveIgnore.ignored) {
+    throw new StandaloneDestinationNotIgnoredError(destination, ignoreRule);
+  }
+  const maxPathLength = context.config.worktreeNaming?.maxPathLength;
+  if (maxPathLength !== undefined && destination.length > maxPathLength) {
+    throw new Error(
+      `Standalone worktree path exceeds configured limit ${maxPathLength}: '${destination}'. Use a shorter worktreesDir, branch name, or a larger worktreeNaming.maxPathLength.`,
+    );
+  }
   let localBranchExists = true;
   try {
     await exec(["show-ref", "--verify", `refs/heads/${branch}`], context.mainRoot);
@@ -364,10 +387,7 @@ export async function createStandaloneWorktree(
       null;
     reusedRemoteBranch = branchSource !== null;
   }
-  const ownedParents = await missingDestinationParents(
-    join(context.mainRoot, ".worktrees"),
-    destination,
-  );
+  const ownedParents = await missingDestinationParents(worktreesBase, destination);
   const hookOutcomes: LifecycleHookOutcome[] = [];
   if (!dryRun) {
     if (options.skipHooks !== true) {

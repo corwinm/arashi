@@ -15,7 +15,7 @@ import { discoverPrunableWorktrees, pruneRepositoryWorktrees } from "../core/rem
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -164,6 +164,7 @@ export const executePrune = async (options: PruneOptions): Promise<number> => {
       ...summarized,
       mode: "standalone" as const,
       repositoryPath: context.mainRoot,
+      worktreesBase: workspaceJsonMetadata(context).worktreesBase,
     };
     if (options.json) {
       if (data.totalFailed > ZERO)
@@ -236,7 +237,10 @@ export const executePrune = async (options: PruneOptions): Promise<number> => {
     const data = {
       ...summarize({ dryRun, expire, repositories: results, workspaceRoot }),
       mode: "configured" as const,
-      worktreesBase: resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees"),
+      worktreesBase:
+        context.mode === "configured"
+          ? workspaceJsonMetadata(context).worktreesBase
+          : resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees"),
     };
     if (options.json) {
       const hasFailures = data.totalFailed > ZERO;

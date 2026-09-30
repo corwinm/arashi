@@ -415,9 +415,10 @@ describe("lossless bounded dynamic completion query", () => {
       env: environment,
     });
     expect(added.status, added.stderr).toBe(0);
-    expect(
-      records(runQuery(root, ["arashi", "remove", ""]).stdout).map(({ value }) => value),
-    ).toEqual([]);
+    const existingLinked = records(runQuery(root, ["arashi", "remove", ""]).stdout).map(
+      ({ value }) => value,
+    );
+    if (process.platform !== "win32") expect(existingLinked).toContain("linked-branch");
 
     mkdirSync(join(root, ".worktrees"));
     const standaloneRemove = records(runQuery(root, ["arashi", "remove", ""]).stdout).map(

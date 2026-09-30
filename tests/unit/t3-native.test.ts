@@ -13,7 +13,9 @@ import {
   withT3Session,
   type T3NativeDependencies,
 } from "../../src/lib/t3-native.ts";
-import { resolveT3Settings, validateT3Settings } from "../../src/lib/t3-settings.ts";
+import { mergeT3Settings, validateT3Settings } from "../../src/lib/t3-settings.ts";
+import { CURRENT_CONFIG_VERSION } from "../../src/lib/config.ts";
+import { getUserConfigPath, resolveEffectivePersonalConfig } from "../../src/lib/user-config.ts";
 import { nativeConfig, nativeEnvironment } from "../helpers/t3-native.ts";
 
 const roots: string[] = [];
@@ -365,17 +367,37 @@ describe("catalog selection and preferences", () => {
   });
   test("merges explicit > workspace > user per field and rejects invalid applicable preferences", async () => {
     const fixture = await runtimeFixture();
-    const user = join(fixture.baseDir, "user.json");
+    const user = getUserConfigPath({ HOME: fixture.baseDir });
+    await mkdir(join(fixture.baseDir, ".arashi"));
     await writeFile(
       user,
       JSON.stringify({
+        version: CURRENT_CONFIG_VERSION,
         defaults: {
           create: { switch: true },
           t3: { provider: "codex", model: "personal", effort: "medium" },
         },
       }),
     );
-    expect(await resolveT3Settings({ effort: "high" }, { model: "workspace" }, user)).toEqual({
+    const resolvePersonal = () =>
+      resolveEffectivePersonalConfig({
+        env: { HOME: fixture.baseDir },
+        mainRoot: fixture.baseDir,
+        builtInWorktreesDir: ".arashi/worktrees",
+        workspaceConfig: {
+          version: CURRENT_CONFIG_VERSION,
+          reposDir: "./repos",
+          repos: {},
+          defaults: { t3: { model: "workspace" } },
+        },
+      });
+    const effective = await resolvePersonal();
+    expect(effective.sources).toMatchObject({
+      "defaults.t3.provider": "user",
+      "defaults.t3.model": "workspace",
+      "defaults.t3.effort": "user",
+    });
+    expect(mergeT3Settings({ effort: "high" }, effective.config.defaults?.t3)).toEqual({
       provider: "codex",
       model: "workspace",
       effort: "high",
@@ -390,8 +412,9 @@ describe("catalog selection and preferences", () => {
       cli: "/installed/bin/t3",
     });
     await writeFile(user, "{");
-    await expect(resolveT3Settings({}, undefined, user)).rejects.toThrow("invalid JSON");
+    await expect(resolvePersonal()).rejects.toThrow(user);
     await rm(user);
-    expect(await resolveT3Settings({}, undefined, user)).toEqual({});
+    expect((await resolvePersonal()).config.defaults?.t3).toEqual({ model: "workspace" });
+    expect(mergeT3Settings({}, undefined)).toEqual({});
   });
 });

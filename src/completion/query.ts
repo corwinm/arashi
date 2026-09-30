@@ -16,6 +16,11 @@ import type {
   ContractOption,
 } from "../contracts/cli-commands.ts";
 import type { CompletionCandidate, CompletionCandidateKind } from "./types.ts";
+import {
+  getUserConfigPath,
+  normalizeUserConfig,
+  resolveUserWorktreesBase,
+} from "../lib/user-config.ts";
 
 export const COMPLETION_QUERY_BUDGET_MS = 200;
 const MAX_COMPLETION_CONFIG_BYTES = 1024 * 1024;
@@ -369,10 +374,26 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
   if (!commonDirectory) return null;
   const mainRoot =
     basename(commonDirectory) === ".git" ? dirname(commonDirectory) : commonDirectory;
+  let worktreesBase = resolve(mainRoot, ".worktrees");
   try {
-    if (!statSync(resolve(mainRoot, ".worktrees")).isDirectory()) return null;
+    const userPath = getUserConfigPath();
+    if (existsSync(userPath)) {
+      const user = normalizeUserConfig(readCompletionConfig(userPath, deadline));
+      if (user.worktreesDir) worktreesBase = resolveUserWorktreesBase(mainRoot, user.worktreesDir);
+    }
   } catch {
     return null;
+  }
+  let directoryExists = false;
+  try {
+    directoryExists = statSync(worktreesBase).isDirectory();
+  } catch {
+    // Git remains authoritative for linked worktrees outside the current root.
+  }
+  if (!directoryExists) {
+    const linked = gitOutput(mainRoot, ["worktree", "list", "--porcelain"], deadline);
+    if (!linked || linked.split("\n").filter((line) => line.startsWith("worktree ")).length < 2)
+      return null;
   }
   return {
     configured: false,

@@ -11,7 +11,7 @@ import {
   DEFAULT_CONFIG_SCHEMA_URL,
   configExists,
   getConfigPath,
-  loadConfig,
+  loadConfigForUpdate,
   saveConfig,
 } from "../lib/config.ts";
 import {
@@ -19,6 +19,9 @@ import {
   WorktreeLocationValidationError,
   normalizeWorktreesDir,
 } from "../lib/worktree-location.ts";
+import { personalManagedIgnoreOptions } from "../lib/personal-managed-ignore.ts";
+import { resolveEffectivePersonalConfig } from "../lib/user-config.ts";
+import { resolveGitMainWorktree } from "../lib/workspace-context.ts";
 import {
   DiskFullError,
   PermissionError,
@@ -69,13 +72,16 @@ const previewBootstrapManagedIgnore = (
   reposDir: string,
   worktreesDir: string,
   requestedScope?: string,
+  skipWorktreesDir = false,
 ): ManagedIgnoreReconciliation => {
   const validScopes = new Set<ManagedIgnoreScope>(["local", "tracked", "none"]);
   const scope = (requestedScope ?? "local") as ManagedIgnoreScope;
   if (!validScopes.has(scope)) {
     throw new Error("Invalid ignore scope. Expected one of: local, tracked, none.");
   }
-  const classifications = classifyManagedPaths([reposDir, worktreesDir]);
+  const classifications = classifyManagedPaths(
+    skipWorktreesDir ? [reposDir] : [reposDir, worktreesDir],
+  );
   const plannedRules =
     scope === "none"
       ? []
@@ -1031,15 +1037,14 @@ export const executeInit = async (
       options.reposDir === undefined &&
       options.worktreesDir === undefined
     ) {
-      const existingConfig = await loadConfig(workspaceRoot);
-      const worktreesDir = existingConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR;
+      const existingConfig = await loadConfigForUpdate(workspaceRoot);
+      const ignoreOptions = await personalManagedIgnoreOptions(workspaceRoot, existingConfig);
+      const worktreesDir = ignoreOptions.worktreesDir;
       const managedIgnore = await reconcileRepositoryManagedIgnore({
         dryRun: options.dryRun,
         repositoryType,
-        reposDir: existingConfig.reposDir,
+        ...ignoreOptions,
         requestedScope: options.ignoreScope,
-        workspaceRoot,
-        worktreesDir,
       });
       return {
         configPath: getConfigPath(workspaceRoot),
@@ -1145,19 +1150,42 @@ export const executeInit = async (
       throw error;
     }
     logVerbose(`Resolved worktrees directory: ${resolve(workspaceRoot, worktreesDir)}`, options);
+    const effective = await resolveEffectivePersonalConfig({
+      builtInWorktreesDir: omittedWorktreesDir,
+      mainRoot: (await resolveGitMainWorktree(workspaceRoot)) ?? workspaceRoot,
+      workspaceRoot,
+      workspaceConfig: { version: "1.0.0", repos: {}, reposDir, worktreesDir },
+      workspaceWorktreesDirAuthored: rawWorktreesDir !== undefined,
+    });
+    const personalDirectory = effective.sources.worktreesDir === "user";
+    if (personalDirectory) worktreesDir = effective.worktreesBase;
+    const ignoreOptions = await personalManagedIgnoreOptions(workspaceRoot, {
+      version: "1.0.0",
+      repos: {},
+      reposDir,
+      ...(personalDirectory ? {} : { worktreesDir }),
+    });
 
     // Reconcile before any managed directories are materialized.
     logVerbose("Reconciling managed Git ignore rules...", options);
     const managedIgnore =
       options.dryRun && initRoot.bootstrapped
-        ? previewBootstrapManagedIgnore(workspaceRoot, reposDir, worktreesDir, options.ignoreScope)
+        ? previewBootstrapManagedIgnore(
+            workspaceRoot,
+            reposDir,
+            ignoreOptions.worktreesDir,
+            options.ignoreScope,
+            ignoreOptions.skipWorktreesDir,
+          )
         : await reconcileRepositoryManagedIgnore({
             dryRun: options.dryRun,
             repositoryType,
             reposDir,
             requestedScope: options.ignoreScope,
             workspaceRoot,
-            worktreesDir,
+            worktreesDir: ignoreOptions.worktreesDir,
+            worktreesWorkspaceRoot: ignoreOptions.worktreesWorkspaceRoot,
+            skipWorktreesDir: ignoreOptions.skipWorktreesDir,
           });
     if (options.dryRun && managedIgnore.targetPath) {
       logDryRun(
@@ -1361,7 +1389,9 @@ export const executeInit = async (
       repos: discoveredRepos,
       reposDir: reposDir,
       version: "1.0.0",
-      worktreesDir,
+      ...(rawWorktreesDir !== undefined || (repositoryType === "bare" && !personalDirectory)
+        ? { worktreesDir }
+        : {}),
     };
 
     const configPath = getConfigPath(workspaceRoot);
@@ -1587,7 +1617,7 @@ export function createCommand(): Command {
     .option("--repos-dir <path>", "Custom location for managed repositories")
     .option(
       "--worktrees-dir <path>",
-      "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
+      "Shared repo worktree base (otherwise user default, then .. for bare repositories or .arashi/worktrees)",
     )
     .addOption(
       new Option(

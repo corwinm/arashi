@@ -9,6 +9,8 @@ import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
 import { exec } from "../lib/git.ts";
 import chalk from "chalk";
 import { resolve } from "path";
+import { standaloneIgnoreLayout } from "../lib/worktree-location.ts";
+import { parseGitIgnoreVerbose } from "../lib/git-ignore.ts";
 import {
   repositoryStatusToDoctorFindings,
   runDoctor,
@@ -126,14 +128,21 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
     return ERROR_EXIT_CODE;
   }
   if (context?.mode === "standalone") {
+    const worktreesBase =
+      context.effective?.worktreesBase ??
+      resolve(context.mainRoot, context.config.worktreesDir ?? ".worktrees");
+    const layout = standaloneIgnoreLayout(context.mainRoot, worktreesBase);
     let ignored = true;
-    try {
-      await exec(
-        ["check-ignore", "--no-index", ".worktrees/.arashi-ignore-probe"],
-        context.mainRoot,
-      );
-    } catch {
-      ignored = false;
+    if (layout.applicable) {
+      try {
+        const result = await exec(
+          ["check-ignore", "--no-index", "-v", layout.probe],
+          context.mainRoot,
+        );
+        ignored = parseGitIgnoreVerbose(result.stdout).ignored;
+      } catch {
+        ignored = false;
+      }
     }
     const repositoryStatus = await checkRepoStatus(context.repository.name, context.mainRoot);
     const pruneResults = await discoverPrunableWorktrees([context.repository]);
@@ -143,7 +152,7 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
             {
               category: "configuration" as const,
               code: "STANDALONE_WORKTREES_NOT_IGNORED",
-              message: ".worktrees is not effectively ignored",
+              message: `${worktreesBase} is not effectively ignored`,
               scope: context.mainRoot,
               severity: "warning" as const,
               suggestedCommands: ["arashi init --zero-config"],
@@ -200,7 +209,15 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
     }
     return hasBlockingFindings ? ERROR_EXIT_CODE : ZERO;
   }
-  const result = await runDoctor();
+  const result = await runDoctor(
+    process.platform,
+    context.mode === "configured"
+      ? {
+          config: context.config,
+          personalWorktreesDir: context.effective?.sources.worktreesDir === "user",
+        }
+      : {},
+  );
   const hasBlockingFindings = result.summary.error > ZERO;
   const configuredData = {
     ...result,

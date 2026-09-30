@@ -1,4 +1,4 @@
-import { resolveT3Settings } from "../lib/t3-settings.ts";
+import { mergeT3Settings } from "../lib/t3-settings.ts";
 /**
  * CLI Command: Create Worktree
  *
@@ -26,7 +26,7 @@ import {
   calculateWorktreePathPlan,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { basename, dirname, isAbsolute, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { existsSync, lstatSync } from "node:fs";
 import { lstat, mkdtemp, realpath, rm, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -72,6 +72,7 @@ import {
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
+import { resolveEffectivePersonalConfig } from "../lib/user-config.ts";
 import { releaseHookInterruptGuards, resolveHookInputMode } from "../lib/hooks.ts";
 import { formatCreateHookSummary } from "../lib/create-hook-output.ts";
 import {
@@ -1677,9 +1678,22 @@ export async function executeCreate(
     throw loadError;
   });
 
-  const arashiConfig = loadedConfig.config;
+  // Workspace context applies user fallbacks without mutating or reserializing the
+  // authored workspace document loaded above.
+  const effectivePersonalConfig = await resolveEffectivePersonalConfig({
+    builtInWorktreesDir: context.repositoryType === "bare" ? ".." : DEFAULT_WORKTREES_DIR,
+    mainRoot:
+      deps.resolveCreateInvocationContext === undefined && workspaceContext.mode === "configured"
+        ? (workspaceContext.effective?.mainRoot ?? context.workspaceRoot)
+        : context.workspaceRoot,
+    workspaceConfig: loadedConfig.config,
+    workspaceRoot: context.workspaceRoot,
+    workspaceConfigPath: loadedConfig.configPath,
+    workspaceWorktreesDirAuthored: loadedConfig.authoredWorktreesDir === true,
+  });
+  const arashiConfig = effectivePersonalConfig.config;
   const t3Settings = t3Request
-    ? await resolveT3Settings(
+    ? mergeT3Settings(
         {
           ...(options.t3BaseDir !== undefined ? { baseDir: options.t3BaseDir } : {}),
           ...(options.t3Cli !== undefined ? { cli: options.t3Cli } : {}),
@@ -2103,11 +2117,31 @@ export async function executeCreate(
       : context.executionPath;
   let managedIgnore: ManagedIgnoreReconciliation;
   try {
+    const worktreesRelativeToOwner = relative(
+      effectivePersonalConfig.sources.worktreesDir === "user"
+        ? effectivePersonalConfig.mainRoot
+        : context.workspaceRoot,
+      effectivePersonalConfig.worktreesBase,
+    );
+    const worktreesInsideOwner =
+      worktreesRelativeToOwner !== "" &&
+      worktreesRelativeToOwner !== ".." &&
+      !worktreesRelativeToOwner.startsWith(`..${sep}`) &&
+      !isAbsolute(worktreesRelativeToOwner);
+    const managedWorktreesDir = worktreesInsideOwner
+      ? worktreesRelativeToOwner
+      : effectivePersonalConfig.worktreesBase;
     managedIgnore = await reconcileIgnore({
       dryRun: options.dryRun,
       reposDir: arashiConfig.reposDir,
       workspaceRoot: managedIgnoreWorkspaceRoot,
-      worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+      worktreesDir: managedWorktreesDir,
+      skipWorktreesDir:
+        effectivePersonalConfig.sources.worktreesDir === "user" && !worktreesInsideOwner,
+      worktreesWorkspaceRoot:
+        effectivePersonalConfig.sources.worktreesDir === "user" && worktreesInsideOwner
+          ? effectivePersonalConfig.mainRoot
+          : undefined,
     });
     if (
       temporaryIgnoreWorkspace &&

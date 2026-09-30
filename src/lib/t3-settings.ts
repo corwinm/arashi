@@ -1,7 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
 /** Personal handoff choices; credentials and transport addresses never belong here. */
 export interface T3Settings {
   /** Official T3 data directory (absolute path).
@@ -57,35 +53,13 @@ export function validateT3Settings(value: unknown, source: string): T3Settings {
   return settings;
 }
 
-/** Isolated until #387 supplies the general user resolver: read only defaults.t3. */
-export async function resolveT3Settings(
+/** Merge explicit handoff flags over already-resolved personal defaults. */
+export function mergeT3Settings(
   explicit: T3Settings,
-  workspace: T3Settings | undefined,
-  userPath = join(homedir(), ".arashi", "config.json"),
-): Promise<T3Settings> {
-  let user: T3Settings = {};
-  try {
-    const config = JSON.parse(await readFile(userPath, "utf8"));
-    if (
-      !config ||
-      typeof config !== "object" ||
-      Array.isArray(config) ||
-      (config.defaults !== undefined &&
-        (!config.defaults || typeof config.defaults !== "object" || Array.isArray(config.defaults)))
-    )
-      throw new Error(`${userPath}: defaults must be an object`);
-    user = validateT3Settings(config?.defaults?.t3, `${userPath}: defaults.t3`);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw new Error(
-        `Unable to load T3 preferences from ${userPath}: ${error instanceof SyntaxError ? "invalid JSON" : error instanceof Error ? error.message : "invalid configuration"}`,
-        { cause: error },
-      );
-    }
-  }
+  defaults: T3Settings | undefined,
+): T3Settings {
   return {
-    ...user,
-    ...validateT3Settings(workspace, "defaults.t3"),
+    ...validateT3Settings(defaults, "defaults.t3"),
     ...validateT3Settings(explicit, "T3 options"),
   };
 }

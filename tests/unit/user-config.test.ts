@@ -1,0 +1,218 @@
+import { afterEach, describe, expect, test } from "vitest";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "fs/promises";
+import { basename, dirname, join } from "path";
+import { tmpdir } from "os";
+import { CURRENT_CONFIG_VERSION, type Config } from "../../src/lib/config.ts";
+import {
+  getUserConfigPath,
+  loadUserConfig,
+  normalizeUserConfig,
+  resolveEffectivePersonalConfig,
+  resolveUserWorktreesBase,
+} from "../../src/lib/user-config.ts";
+
+const roots: string[] = [];
+const workspace = (overrides: Partial<Config> = {}): Config => ({
+  repos: {},
+  reposDir: "./repos",
+  version: CURRENT_CONFIG_VERSION,
+  worktreesDir: ".arashi/worktrees",
+  ...overrides,
+});
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((path) => rm(path, { force: true, recursive: true })));
+});
+
+describe("user configuration", () => {
+  test("retains the selected built-in instead of a normalized workspace fallback", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const effective = await resolveEffectivePersonalConfig({
+      builtInWorktreesDir: "..",
+      env: { HOME: home },
+      mainRoot: join(home, "workspace.git"),
+      workspaceConfig: workspace(),
+      workspaceConfigPath: null,
+      workspaceWorktreesDirAuthored: false,
+    });
+    expect(effective.config.worktreesDir).toBe("..");
+    expect(effective.sources.worktreesDir).toBe("built-in");
+    expect(effective.worktreesBase).toBe(join(home));
+  });
+  test.each(["C:trees", "c:trees/nested", "C:", " C:trees ", "\tc:trees\t"])(
+    "rejects ambiguous Windows drive-relative paths (%s)",
+    (worktreesDir) => {
+      expect(() => normalizeUserConfig({ version: CURRENT_CONFIG_VERSION, worktreesDir })).toThrow(
+        "Windows drive-relative paths are not supported",
+      );
+    },
+  );
+  test.runIf(process.platform === "win32").each(["C:\\trees", "C:/trees", "\\\\server\\share"])(
+    "accepts Windows absolute roots (%s)",
+    (worktreesDir) => {
+      expect(
+        normalizeUserConfig({ version: CURRENT_CONFIG_VERSION, worktreesDir }).worktreesDir,
+      ).toBe(worktreesDir);
+    },
+  );
+  test
+    .runIf(process.platform !== "win32")
+    .each([" C:\\trees ", "\tC:/trees\t", " \\\\server\\share "])(
+    "rejects unsupported Windows absolute paths after trimming (%s)",
+    (worktreesDir) => {
+      expect(() => normalizeUserConfig({ version: CURRENT_CONFIG_VERSION, worktreesDir })).toThrow(
+        "Windows absolute paths are not valid",
+      );
+    },
+  );
+  test("resolves existing symlink ancestors before accepting personal roots", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const root = join(home, "repo");
+    const alias = join(home, "alias");
+    await mkdir(root);
+    await symlink(root, alias, process.platform === "win32" ? "junction" : "dir");
+    expect(() => resolveUserWorktreesBase(root, "../alias")).toThrow("primary repository root");
+    expect(resolveUserWorktreesBase(root, "../alias/nested/trees")).toBe(
+      join(await realpath(root), "nested", "trees"),
+    );
+    expect(dirname(resolveUserWorktreesBase(root, alias))).toBe(await realpath(root));
+  });
+  test("accepts a partial personal scope but requires version metadata", () => {
+    expect(
+      normalizeUserConfig({
+        version: CURRENT_CONFIG_VERSION,
+        defaults: { create: { launch: "none", switch: false } },
+      }),
+    ).toMatchObject({ defaults: { create: { launch: "none", switch: false } } });
+    expect(() => normalizeUserConfig({ defaults: { create: { switch: true } } })).toThrow(
+      'version: must be "1.0.0"',
+    );
+    expect(() => normalizeUserConfig({ version: CURRENT_CONFIG_VERSION, repos: {} })).toThrow(
+      "repos: unknown property",
+    );
+  });
+
+  test("names malformed and invalid user files with field diagnostics", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const path = getUserConfigPath({ HOME: home });
+    await mkdir(join(home, ".arashi"));
+    await writeFile(
+      path,
+      JSON.stringify({ version: CURRENT_CONFIG_VERSION, worktreeNaming: { style: "wat" } }),
+    );
+    await expect(loadUserConfig({ HOME: home })).rejects.toThrow(
+      `User configuration validation failed at ${path}`,
+    );
+    await writeFile(path, "{");
+    await expect(loadUserConfig({ HOME: home })).rejects.toThrow(path);
+  });
+
+  test("merges nested fields independently and preserves explicit disabling values", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    await mkdir(join(home, ".arashi"));
+    await writeFile(
+      getUserConfigPath({ HOME: home }),
+      JSON.stringify({
+        version: CURRENT_CONFIG_VERSION,
+        defaults: {
+          create: { launch: "sesh", switch: true },
+          editors: { vscode: { create: { launch: "auto", switch: true } } },
+          switch: { mode: "cd" },
+        },
+        worktreeNaming: { branchSlashes: "flatten", style: "repo-branch" },
+        worktreesDir: ".personal-trees",
+      }),
+    );
+    const root = join(home, "workspace");
+    const effective = await resolveEffectivePersonalConfig({
+      builtInWorktreesDir: ".arashi/worktrees",
+      env: { HOME: home },
+      mainRoot: root,
+      workspaceConfig: workspace({
+        defaults: {
+          create: { launch: "none", switch: false },
+          editors: { vscode: { create: { switch: false } } },
+        },
+        worktreeNaming: { style: "branch" },
+      }),
+      workspaceConfigPath: join(root, ".arashi", "config.json"),
+      workspaceWorktreesDirAuthored: false,
+    });
+    expect(effective.config.defaults).toMatchObject({
+      create: { launch: "none", switch: false },
+      editors: { vscode: { create: { launch: "auto", switch: false } } },
+      switch: { mode: "cd" },
+    });
+    expect(effective.config.worktreeNaming).toEqual({
+      branchSlashes: "flatten",
+      style: "branch",
+    });
+    expect(effective.worktreesBase).toBe(
+      join(await realpath(home), "workspace", ".personal-trees"),
+    );
+    expect(effective.sources).toMatchObject({
+      "defaults.create.launch": "workspace",
+      "defaults.create.switch": "workspace",
+      "defaults.editors.vscode.create.launch": "user",
+      "defaults.editors.vscode.create.switch": "workspace",
+      "defaults.switch.mode": "user",
+      worktreesDir: "user",
+    });
+  });
+
+  test("qualifies absolute shared roots per repository with a stable collision suffix", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const shared = join(home, "shared");
+    await mkdir(join(home, ".arashi"));
+    await writeFile(
+      getUserConfigPath({ HOME: home }),
+      JSON.stringify({ version: CURRENT_CONFIG_VERSION, worktreesDir: shared }),
+    );
+    const resolveFor = (mainRoot: string) =>
+      resolveEffectivePersonalConfig({
+        builtInWorktreesDir: ".worktrees",
+        env: { HOME: home },
+        mainRoot,
+        workspaceConfig: workspace({ worktreesDir: ".worktrees" }),
+        workspaceWorktreesDirAuthored: false,
+      });
+    const first = await resolveFor(join(home, "one", "app"));
+    const repeated = await resolveFor(join(home, "one", "app"));
+    const second = await resolveFor(join(home, "two", "app"));
+    expect(first.worktreesBase).toBe(repeated.worktreesBase);
+    expect(first.worktreesBase).not.toBe(second.worktreesBase);
+    expect(dirname(first.worktreesBase)).toBe(join(await realpath(home), "shared"));
+    expect(basename(first.worktreesBase)).toMatch(/^app-[a-f0-9]{8}$/);
+  });
+
+  test("anchors workspace paths explicitly, independently of config provenance", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const mainRoot = join(home, "main.git");
+    const linkedRoot = join(home, "linked");
+    for (const [workspaceRoot, workspaceConfigPath] of [
+      [mainRoot, `${mainRoot}:.arashi/config.json`],
+      [linkedRoot, join(linkedRoot, ".arashi", "config.json")],
+    ]) {
+      for (const authored of [true, false]) {
+        const effective = await resolveEffectivePersonalConfig({
+          builtInWorktreesDir: ".arashi/worktrees",
+          env: { HOME: home },
+          mainRoot,
+          workspaceConfig: workspace(),
+          workspaceConfigPath,
+          workspaceRoot,
+          workspaceWorktreesDirAuthored: authored,
+        });
+        expect(effective.worktreesBase).toBe(join(workspaceRoot, ".arashi", "worktrees"));
+        expect(effective.files.workspace).toBe(workspaceConfigPath);
+        expect(effective.sources.worktreesDir).toBe(authored ? "workspace" : "built-in");
+      }
+    }
+  });
+});

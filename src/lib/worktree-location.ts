@@ -1,4 +1,29 @@
-import { isAbsolute, posix, resolve } from "path";
+import { isAbsolute, join, posix, relative, resolve, sep } from "path";
+
+export function standaloneIgnoreLayout(mainRoot: string, worktreesBase: string) {
+  const relativeBase = relative(mainRoot, worktreesBase);
+  if (relativeBase === "") {
+    throw new WorktreeLocationValidationError(
+      "Standalone worktreesDir must not resolve to the primary repository root. Choose a subdirectory or an external directory.",
+    );
+  }
+  const applicable =
+    relativeBase !== "" &&
+    relativeBase !== ".." &&
+    !relativeBase.startsWith(`..${sep}`) &&
+    !isAbsolute(relativeBase);
+  const literalDirectory = relativeBase
+    .split(sep)
+    .join("/")
+    .replace(/\/+$/, "")
+    .replace(/([\\*?[\]])/g, "\\$1")
+    .replace(/^([#!])/, "\\$1");
+  return {
+    applicable,
+    probe: join(worktreesBase, ".arashi-ignore-probe"),
+    rule: applicable ? `${literalDirectory}/` : ".worktrees/",
+  };
+}
 
 export const DEFAULT_WORKTREES_DIR = ".arashi/worktrees";
 export const DEFAULT_WORKTREES_GITIGNORE_ENTRY = ".arashi/worktrees/";
@@ -45,6 +70,9 @@ export function normalizeWorktreesDirWithDefault(worktreesDir?: string): string 
 }
 
 export function resolveWorktreesBasePath(workspaceRoot: string, worktreesDir?: string): string {
+  if (worktreesDir !== undefined && isAbsolute(worktreesDir.trim())) {
+    return resolve(worktreesDir.trim());
+  }
   return resolve(workspaceRoot, normalizeWorktreesDirWithDefault(worktreesDir));
 }
 

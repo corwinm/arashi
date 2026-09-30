@@ -13,7 +13,7 @@ import {
   validateHook,
 } from "./hooks.ts";
 import type { LifecycleHookPreparationCandidate } from "./hooks.ts";
-import { basename, join, resolve } from "path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "path";
 import {
   checkAllRepos,
   isMissingRepositoryStatus,
@@ -21,7 +21,7 @@ import {
 } from "../commands/status.ts";
 import type { Config, WorkspaceRepositoryRoots } from "./config.ts";
 import { getConfigPath, loadWorkspaceRepositories } from "./config.ts";
-import { findConfiguredWorkspaceRoots } from "./workspace-context.ts";
+import { findConfiguredWorkspaceRoots, resolveGitMainWorktree } from "./workspace-context.ts";
 import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
 import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
@@ -294,13 +294,47 @@ export const managedIgnoreToDoctorFindings = (
 const collectManagedIgnoreFindings = async (
   workspaceRoot: string,
   config: Config,
+  personalWorktreesDir = false,
 ): Promise<DoctorFinding[]> => {
   try {
+    const ignoreRoot = personalWorktreesDir
+      ? ((await resolveGitMainWorktree(workspaceRoot)) ?? workspaceRoot)
+      : workspaceRoot;
+    const worktreesDir = personalWorktreesDir
+      ? relative(ignoreRoot, config.worktreesDir!)
+      : (config.worktreesDir ?? DEFAULT_WORKTREES_DIR);
+    const skipWorktreesDir =
+      personalWorktreesDir &&
+      (worktreesDir === ".." || worktreesDir.startsWith(`..${sep}`) || isAbsolute(worktreesDir));
     const inspection = await inspectRepositoryManagedIgnore({
       reposDir: config.reposDir,
       workspaceRoot,
-      worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+      worktreesDir,
+      skipWorktreesDir,
     });
+    if (personalWorktreesDir && resolve(ignoreRoot) !== resolve(workspaceRoot)) {
+      // Repository paths and tracked ignore rules belong to the active branch;
+      // personal worktree coverage belongs to the primary checkout. Include the
+      // personal rule in the active inventory so shared local rules aren't stale.
+      const personalInspection = await inspectRepositoryManagedIgnore({
+        reposDir: config.reposDir,
+        workspaceRoot: ignoreRoot,
+        worktreesDir,
+        skipWorktreesDir,
+      });
+      return [
+        ...managedIgnoreToDoctorFindings({
+          ...inspection,
+          paths: inspection.paths.filter((path) => path.input === config.reposDir),
+        }),
+        ...managedIgnoreToDoctorFindings({
+          ...personalInspection,
+          paths: personalInspection.paths.filter((path) => path.input === worktreesDir),
+          // Staleness is diagnosed in the active workspace, not another branch.
+          staleRules: [],
+        }),
+      ];
+    }
     return managedIgnoreToDoctorFindings(inspection);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1279,6 +1313,7 @@ const collectShellAndInstallHints = (): DoctorFinding[] => [];
 
 export const runDoctor = async (
   platform: NodeJS.Platform = process.platform,
+  options: { config?: Config; personalWorktreesDir?: boolean } = {},
 ): Promise<DoctorResult> => {
   const findings: DoctorFinding[] = [];
   let workspaceRoot: string | null = null;
@@ -1318,6 +1353,7 @@ export const runDoctor = async (
       workspaceRoots,
       {
         allowUnavailableMaterializationSource: true,
+        config: options.config,
       },
     ));
   } catch (error) {
@@ -1344,7 +1380,7 @@ export const runDoctor = async (
   }
 
   const phaseResults = await Promise.allSettled([
-    collectManagedIgnoreFindings(configurationRoot, config),
+    collectManagedIgnoreFindings(configurationRoot, config, options.personalWorktreesDir),
     collectRepositoryFindings(executionRoot, config),
     collectWorktreeFindings(executionRoot, config),
     collectHookFindings(configurationRoot, executionRoot, config, platform),

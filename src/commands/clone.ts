@@ -11,7 +11,13 @@ import {
   unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { loadConfig, normalizeConfig, repairRepositoryGitUrls, saveConfig } from "../lib/config.ts";
+import {
+  loadConfig,
+  loadConfigForUpdate,
+  normalizeConfig,
+  repairRepositoryGitUrls,
+  saveConfig,
+} from "../lib/config.ts";
 import type { WorkspaceRepositoryRoots } from "../lib/config.ts";
 import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
 import { join, resolve } from "path";
@@ -37,6 +43,7 @@ import {
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import { personalManagedIgnoreOptions } from "../lib/personal-managed-ignore.ts";
 import { findConfiguredWorkspaceRoots } from "../lib/workspace-context.ts";
 
 interface Choice<T> {
@@ -185,7 +192,7 @@ export async function executeClone(
   options: CloneCommandOptions,
   deps: CloneCommandDependencies = {},
 ): Promise<CloneExecutionResult> {
-  const readConfig = deps.loadConfig ?? loadConfig;
+  const readConfig = deps.loadConfig ?? loadConfigForUpdate;
   const writeConfig = deps.saveConfig ?? saveConfig;
   const repairGitUrls = deps.repairRepositoryGitUrls ?? repairRepositoryGitUrls;
   const discoverRepositories = deps.discoverCloneRepositories ?? discoverCloneRepositories;
@@ -217,7 +224,9 @@ export async function executeClone(
     resolveSourceRoot(executionRoot) ??
     (configurationRoot === executionRoot ? null : configurationRoot);
   const currentBranch = sourceWorkspaceRoot ? await resolveBranch(executionRoot) : null;
-  const config = normalizeConfig(await readConfig(configurationRoot));
+  const authoredConfig = await readConfig(configurationRoot);
+  const config = normalizeConfig(authoredConfig);
+  if (authoredConfig.worktreesDir === undefined) delete config.worktreesDir;
 
   let repairResult = await repairGitUrls(executionRoot, config);
   if (configurationRoot !== executionRoot && repairResult.unresolved.length > 0) {
@@ -515,11 +524,15 @@ export async function executeClone(
     targetBranch?: string;
   }> = [];
 
-  const managedIgnore = await (deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore)({
-    reposDir: config.reposDir,
-    workspaceRoot: configurationRoot,
-    worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-  });
+  const managedIgnore = await (deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore)(
+    deps.loadConfig
+      ? {
+          reposDir: config.reposDir,
+          workspaceRoot: configurationRoot,
+          worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+        }
+      : await personalManagedIgnoreOptions(configurationRoot, config),
+  );
   if (!options.json) {
     for (const warning of managedIgnore.warnings) {
       warn(warning);
