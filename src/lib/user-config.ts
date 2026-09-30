@@ -75,6 +75,10 @@ export const normalizeUserConfig = (value: unknown): UserConfig => {
   if (value.worktreesDir !== undefined) {
     if (typeof value.worktreesDir !== "string" || !value.worktreesDir.trim()) {
       errors.push("worktreesDir: must be a non-empty string if present");
+    } else if (/^[a-z]:($|[^\\/])/i.test(value.worktreesDir.trim())) {
+      errors.push(
+        "worktreesDir: Windows drive-relative paths are not supported; use an absolute or repository-relative path",
+      );
     } else if (
       process.platform !== "win32" &&
       win32.isAbsolute(value.worktreesDir.trim()) &&

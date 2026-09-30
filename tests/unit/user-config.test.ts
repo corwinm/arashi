@@ -25,6 +25,22 @@ afterEach(async () => {
 });
 
 describe("user configuration", () => {
+  test.each(["C:trees", "c:trees/nested", "C:", " C:trees ", "\tc:trees\t"])(
+    "rejects ambiguous Windows drive-relative paths (%s)",
+    (worktreesDir) => {
+      expect(() => normalizeUserConfig({ version: CURRENT_CONFIG_VERSION, worktreesDir })).toThrow(
+        "Windows drive-relative paths are not supported",
+      );
+    },
+  );
+  test.runIf(process.platform === "win32").each(["C:\\trees", "C:/trees", "\\\\server\\share"])(
+    "accepts Windows absolute roots (%s)",
+    (worktreesDir) => {
+      expect(
+        normalizeUserConfig({ version: CURRENT_CONFIG_VERSION, worktreesDir }).worktreesDir,
+      ).toBe(worktreesDir);
+    },
+  );
   test
     .runIf(process.platform !== "win32")
     .each([" C:\\trees ", "\tC:/trees\t", " \\\\server\\share "])(

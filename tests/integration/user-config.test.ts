@@ -87,7 +87,9 @@ describe("user configuration integration", () => {
       const setting = JSON.parse(effective.stdout).data.settings.worktreesDir;
       expect(setting.source).toBe(mode === "explicit" ? "workspace" : "user");
       if (mode !== "external")
-        expect(setting.value).toBe(
+        // The leaf does not exist yet; canonicalize its existing parent to compare
+        // Windows short/long aliases without hiding an incorrect worktree directory.
+        expect(join(await realpath(dirname(setting.value)), basename(setting.value))).toBe(
           join(await realpath(root), mode === "explicit" ? ".project-trees" : directory),
         );
       const created = await arashi(root, ["create", "fresh-personal", "--json"], home);
