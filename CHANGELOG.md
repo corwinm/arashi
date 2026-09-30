@@ -1,3 +1,14 @@
+## [1.39.0](https://github.com/corwinm/arashi/compare/v1.38.0...v1.39.0) (2026-09-30)
+
+### Features
+
+- **config:** support user-level defaults and standalone personalization ([#204](https://github.com/corwinm/arashi/issues/204)) ([653ef88](https://github.com/corwinm/arashi/commit/653ef889c9cf43b64e0fc38d5f8fec163b07feb8)), closes [corwinm/arashi-arashi#387](https://github.com/corwinm/arashi-arashi/issues/387)
+- replace T3 bridge with native handoff adapter ([#205](https://github.com/corwinm/arashi/issues/205)) ([9406111](https://github.com/corwinm/arashi/commit/940611168e0e30cc0748a4a3c9a12164123c1281)), closes [corwinm/arashi-docs#121](https://github.com/corwinm/arashi-docs/issues/121) [corwinm/arashi-skills#85](https://github.com/corwinm/arashi-skills/issues/85)
+
+### Bug Fixes
+
+- **installer:** avoid GNU awk regexp escape warnings ([#203](https://github.com/corwinm/arashi/issues/203)) ([e696367](https://github.com/corwinm/arashi/commit/e696367e3cc5708044a1deb08ec6d1b836655cff))
+
 ## [1.38.0](https://github.com/corwinm/arashi/compare/v1.37.0...v1.38.0) (2026-09-28)
 
 ### Features
