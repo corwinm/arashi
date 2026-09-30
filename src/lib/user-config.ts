@@ -325,7 +325,7 @@ export const resolveEffectivePersonalConfig = async (options: {
             ...(maxPathLength === undefined ? {} : { maxPathLength }),
           }
         : undefined,
-    worktreesDir: worktreesSource === "user" ? worktreesBase : workspace.worktreesDir,
+    worktreesDir: worktreesSource === "user" ? worktreesBase : authoredDirectory,
   };
   return {
     config: effective,

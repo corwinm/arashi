@@ -1,18 +1,21 @@
 import { isAbsolute, relative, sep } from "path";
 import type { Config } from "./config.ts";
 import { resolveEffectivePersonalConfig } from "./user-config.ts";
-import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
-import { resolveGitMainWorktree } from "./workspace-context.ts";
+import {
+  resolveConfiguredBuiltInWorktreesDir,
+  resolveGitMainWorktree,
+} from "./workspace-context.ts";
 
 /** Resolve ignore inputs independently of the workspace state being edited. */
 export async function personalManagedIgnoreOptions(workspaceRoot: string, config: Config) {
   const mainRoot = (await resolveGitMainWorktree(workspaceRoot)) ?? workspaceRoot;
+  const builtInWorktreesDir = await resolveConfiguredBuiltInWorktreesDir(workspaceRoot);
   const effective = await resolveEffectivePersonalConfig({
     mainRoot,
     workspaceConfig: config,
     workspaceRoot,
     workspaceWorktreesDirAuthored: config.worktreesDir !== undefined,
-    builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
+    builtInWorktreesDir,
   });
   const personal = effective.sources.worktreesDir === "user";
   // Personal roots belong to primary, but repository rules belong to the active
@@ -20,7 +23,7 @@ export async function personalManagedIgnoreOptions(workspaceRoot: string, config
   const ignoreRoot = personal ? mainRoot : workspaceRoot;
   const worktreesDir = personal
     ? relative(ignoreRoot, effective.worktreesBase)
-    : (config.worktreesDir ?? DEFAULT_WORKTREES_DIR);
+    : (effective.config.worktreesDir ?? builtInWorktreesDir);
   return {
     reposDir: config.reposDir,
     workspaceRoot,

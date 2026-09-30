@@ -25,6 +25,21 @@ afterEach(async () => {
 });
 
 describe("user configuration", () => {
+  test("retains the selected built-in instead of a normalized workspace fallback", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const effective = await resolveEffectivePersonalConfig({
+      builtInWorktreesDir: "..",
+      env: { HOME: home },
+      mainRoot: join(home, "workspace.git"),
+      workspaceConfig: workspace(),
+      workspaceConfigPath: null,
+      workspaceWorktreesDirAuthored: false,
+    });
+    expect(effective.config.worktreesDir).toBe("..");
+    expect(effective.sources.worktreesDir).toBe("built-in");
+    expect(effective.worktreesBase).toBe(join(home));
+  });
   test.each(["C:trees", "c:trees/nested", "C:", " C:trees ", "\tc:trees\t"])(
     "rejects ambiguous Windows drive-relative paths (%s)",
     (worktreesDir) => {

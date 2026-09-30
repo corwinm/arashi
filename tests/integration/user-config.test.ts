@@ -63,6 +63,59 @@ afterEach(async () => {
 });
 
 describe("user configuration integration", () => {
+  test.each(["malformed-user", "outside-git"])(
+    "effective inspection returns a JSON error envelope for %s",
+    async (mode) => {
+      const { home, root } = await repository("effective-error");
+      if (mode === "malformed-user") {
+        await mkdir(join(home, ".arashi"));
+        await writeFile(join(home, ".arashi", "config.json"), "{");
+      }
+      const result = await arashi(
+        mode === "outside-git" ? home : root,
+        ["config", "effective", "--json"],
+        home,
+      );
+      expect(result.exitCode).not.toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        command: "config effective",
+        ok: false,
+        error: { code: expect.any(String), message: expect.any(String) },
+      });
+      expect(result.stderr).toBe("");
+    },
+  );
+  test("bare configured init retains sibling fallback after personal defaults are removed", async () => {
+    const { home, root } = await repository("bare-fallback");
+    const bare = join(dirname(root), "workspace.git");
+    expect((await run(root, ["git", "clone", "--bare", root, bare])).exitCode).toBe(0);
+    await writeUserConfig(home, { worktreesDir: ".personal-trees" });
+    const initialized = await arashi(bare, ["init", "--no-discover", "--json"], home);
+    expect(initialized.exitCode, initialized.stdout + initialized.stderr).toBe(0);
+    const configPath = join(bare, ".arashi", "config.json");
+    const configBefore = await readFile(configPath, "utf8");
+    expect(JSON.parse(configBefore).worktreesDir).toBeUndefined();
+    const personal = await arashi(bare, ["create", "personal", "--json"], home);
+    expect(personal.exitCode, personal.stdout + personal.stderr).toBe(0);
+    const personalPath = JSON.parse(personal.stdout).data.repositories[0].worktreePath;
+    await rm(join(home, ".arashi", "config.json"));
+    for (const [cwd, branch] of [
+      [bare, "after-removal"],
+      [personalPath, "from-linked"],
+    ]) {
+      const inspection = await arashi(cwd, ["config", "effective", "--json"], home);
+      expect(inspection.exitCode, inspection.stdout + inspection.stderr).toBe(0);
+      const setting = JSON.parse(inspection.stdout).data.settings.worktreesDir;
+      expect(setting.source).toBe("built-in");
+      expect(await realpath(setting.value)).toBe(await realpath(dirname(bare)));
+      const created = await arashi(cwd, ["create", branch, "--json"], home);
+      expect(created.exitCode, created.stdout + created.stderr).toBe(0);
+      expect(await realpath(JSON.parse(created.stdout).data.repositories[0].worktreePath)).toBe(
+        join(await realpath(dirname(bare)), "workspace", branch),
+      );
+    }
+    expect(await readFile(configPath, "utf8")).toBe(configBefore);
+  });
   test.each(["relative", "external", "later", "explicit"])(
     "fresh configured init preserves personal fallback (%s)",
     async (mode) => {

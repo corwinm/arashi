@@ -1659,7 +1659,7 @@ export async function executeCreate(
   // Workspace context applies user fallbacks without mutating or reserializing the
   // authored workspace document loaded above.
   const effectivePersonalConfig = await resolveEffectivePersonalConfig({
-    builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
+    builtInWorktreesDir: context.repositoryType === "bare" ? ".." : DEFAULT_WORKTREES_DIR,
     mainRoot:
       deps.resolveCreateInvocationContext === undefined && workspaceContext.mode === "configured"
         ? (workspaceContext.effective?.mainRoot ?? context.workspaceRoot)

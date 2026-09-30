@@ -81,10 +81,7 @@ describe("standalone lifecycle", () => {
       details: {
         effectiveIgnore: { ignored: false, source: null },
         mutation: { branch: false, config: false, ignore: false, worktree: false },
-        repairCommands: expect.arrayContaining([
-          "arashi init --zero-config",
-          expect.stringContaining("info/exclude"),
-        ]),
+        repairCommands: ["arashi init --zero-config"],
       },
     });
     expect(JSON.parse(result.stdout).error.details.destination).toBe(

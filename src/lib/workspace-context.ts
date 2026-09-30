@@ -8,7 +8,7 @@ import {
   loadConfigWithFallback,
 } from "./config.ts";
 import type { Config, WorkspaceRepository, WorkspaceRepositoryRoots } from "./config.ts";
-import { exec } from "./git.ts";
+import { exec, isBareRepo } from "./git.ts";
 import { createJsonErrorEnvelope, writeJsonEnvelope } from "./json-output.ts";
 import { error as logError } from "./logger.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
@@ -78,13 +78,22 @@ const standaloneConfig = (): Config => ({
   worktreesDir: ".worktrees",
 });
 
+export async function resolveConfiguredBuiltInWorktreesDir(workspaceRoot: string): Promise<string> {
+  try {
+    return (await isBareRepo(workspaceRoot)) ? ".." : DEFAULT_WORKTREES_DIR;
+  } catch {
+    // Configured directories without Git retain the non-bare compatibility default.
+    return DEFAULT_WORKTREES_DIR;
+  }
+}
+
 async function discoverConfigured(startPath: string): Promise<ConfiguredWorkspaceContext | null> {
   try {
     const workspaceRoot = await findWorkspaceRoot(startPath);
     const loaded = await loadConfigWithFallback(workspaceRoot);
     const mainRoot = (await resolveGitMainWorktree(workspaceRoot)) ?? workspaceRoot;
     const effective = await resolveEffectivePersonalConfig({
-      builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
+      builtInWorktreesDir: await resolveConfiguredBuiltInWorktreesDir(workspaceRoot),
       mainRoot,
       workspaceConfig: loaded.config,
       workspaceRoot,

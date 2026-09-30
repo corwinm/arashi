@@ -1,7 +1,12 @@
 import { Command, Option } from "commander";
 import { isAbsolute, resolve } from "path";
 import { CURRENT_CONFIG_VERSION } from "../lib/config.ts";
-import { createJsonSuccessEnvelope, writeJsonEnvelope } from "../lib/json-output.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import {
   resolveGitMainWorktree,
   resolveWorkspaceContext,
@@ -148,26 +153,34 @@ const createEffectiveCommand = (): Command =>
     .option("--worktrees-dir <path>", "Inspect with an explicit worktree directory")
     .option("-j, --json", "Output result as JSON")
     .action(async (options: EffectiveOptions) => {
-      const resolved = await effectiveWithoutBootstrap();
-      const effective = applyCliInspectionOverrides(resolved.effective, options);
-      const data = {
-        files: effective.files,
-        mode: resolved.context.mode,
-        settings: inspectableEntries(effective),
-        workspaceRoot: resolved.context.workspaceRoot,
-        worktreesBase: effective.worktreesBase,
-      };
-      if (options.json) {
-        writeJsonEnvelope(createJsonSuccessEnvelope("config effective", data));
-        return;
-      }
-      console.log(`Workspace mode: ${data.mode}`);
-      console.log(`Workspace root: ${data.workspaceRoot}`);
-      console.log(`Workspace config: ${data.files.workspace ?? "none"}`);
-      console.log(`User config: ${data.files.user ?? "none"}`);
-      console.log("Effective settings:");
-      for (const [field, entry] of Object.entries(data.settings)) {
-        console.log(`  ${field}: ${JSON.stringify(entry.value)} (${entry.source})`);
+      try {
+        const resolved = await effectiveWithoutBootstrap();
+        const effective = applyCliInspectionOverrides(resolved.effective, options);
+        const data = {
+          files: effective.files,
+          mode: resolved.context.mode,
+          settings: inspectableEntries(effective),
+          workspaceRoot: resolved.context.workspaceRoot,
+          worktreesBase: effective.worktreesBase,
+        };
+        if (options.json) {
+          writeJsonEnvelope(createJsonSuccessEnvelope("config effective", data));
+          return;
+        }
+        console.log(`Workspace mode: ${data.mode}`);
+        console.log(`Workspace root: ${data.workspaceRoot}`);
+        console.log(`Workspace config: ${data.files.workspace ?? "none"}`);
+        console.log(`User config: ${data.files.user ?? "none"}`);
+        console.log("Effective settings:");
+        for (const [field, entry] of Object.entries(data.settings)) {
+          console.log(`  ${field}: ${JSON.stringify(entry.value)} (${entry.source})`);
+        }
+      } catch (error) {
+        if (!options.json) throw error;
+        writeJsonEnvelope(
+          createJsonErrorEnvelope("config effective", unknownErrorToJsonError(error)),
+        );
+        process.exitCode = 1;
       }
     });
 

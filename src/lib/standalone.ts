@@ -35,10 +35,7 @@ export class StandaloneDestinationNotIgnoredError extends Error {
       effectiveIgnore: { ignored: false, pattern: null, source: null },
       mode: "standalone",
       mutation: { branch: false, config: false, ignore: false, worktree: false },
-      repairCommands: [
-        "arashi init --zero-config",
-        `printf '${ignoreRule}\\n' >> "$(git rev-parse --git-path info/exclude)"`,
-      ],
+      repairCommands: ["arashi init --zero-config"],
     };
     this.name = "StandaloneDestinationNotIgnoredError";
   }
