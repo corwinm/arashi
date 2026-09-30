@@ -6,8 +6,8 @@ import { T3HandoffError } from "./t3-error.ts";
 import type { T3ProcessResult } from "./t3-handoff.ts";
 import type { T3Settings } from "./t3-settings.ts";
 
-// Deliberately fail closed across independently versioned T3 releases.
-export const T3_NATIVE_VERSIONS = ["0.0.43"] as const;
+// Stable releases are checked against the negotiated wire protocol/capabilities.
+export const T3_NATIVE_MIN_VERSION = "0.0.43";
 export type JsonObject = Record<string, unknown>;
 export const record = (value: unknown): JsonObject =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
@@ -60,10 +60,20 @@ const runProcess: NonNullable<T3NativeDependencies["runProcess"]> = (command, op
   });
 
 export function verifyT3Version(version: unknown): asserts version is string {
-  if (!T3_NATIVE_VERSIONS.includes(version as "0.0.43")) {
+  const components =
+    typeof version === "string" && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(version)
+      ? version.split(".").map(Number)
+      : [];
+  const minimum = T3_NATIVE_MIN_VERSION.split(".").map(Number);
+  const difference = components.findIndex((value, index) => value !== minimum[index]);
+  if (
+    components.length !== 3 ||
+    components.some((value) => !Number.isSafeInteger(value)) ||
+    (difference !== -1 && components[difference]! < minimum[difference]!)
+  ) {
     fail(
       "T3_VERSION_UNSUPPORTED",
-      "Native T3 handoff supports official T3 0.0.43 only. Install a matching official CLI and server; no component is downloaded automatically.",
+      `Native T3 handoff requires a stable official T3 release ${T3_NATIVE_MIN_VERSION} or later, matching CLI/server versions, and orchestration protocol 1. Nightly/prerelease builds are unsupported.`,
     );
   }
 }
@@ -280,7 +290,7 @@ export async function withT3Session<T>(
   } catch {
     return fail(
       "T3_AUTH_FAILED",
-      "Official T3 session issuance failed. Verify --t3-cli and --t3-base-dir point to matching 0.0.43 components.",
+      "Official T3 session issuance failed. Verify --t3-cli and --t3-base-dir point to matching compatible CLI/server components.",
     );
   }
   const sessionId = identifier(session.sessionId);
@@ -433,13 +443,11 @@ export function resolveT3Selection(
   return { instanceId, model: model.slug as string, options };
 }
 
-export async function preflightT3Native(
+export async function readT3CliVersion(
+  cli: string,
   cwd: string,
   dependencies: T3NativeDependencies = {},
-  settings: T3Settings = {},
-  dryRun = false,
-): Promise<T3NativeEnvironment> {
-  const cli = settings.cli ?? "t3";
+): Promise<string> {
   const version = await (dependencies.runProcess ?? runProcess)([cli, "--version"], {
     cwd,
     env: process.env,
@@ -447,9 +455,21 @@ export async function preflightT3Native(
   if (version.exitCode !== 0)
     return fail(
       "T3_CLI_NOT_FOUND",
-      "Install official T3 0.0.43 (t3), or select its installed executable with --t3-cli. The desktop alone does not expose supported headless authentication.",
+      "Install the matching official T3 CLI (t3), or select its installed executable with --t3-cli. The desktop alone does not expose supported headless authentication.",
     );
-  verifyT3Version(version.stdout.trim().match(/^(?:t3\s+)?v?(\d+\.\d+\.\d+)$/u)?.[1]);
+  const cliVersion = version.stdout.trim().match(/^(?:t3\s+)?v?(\d+\.\d+\.\d+)$/u)?.[1];
+  verifyT3Version(cliVersion);
+  return cliVersion;
+}
+
+export async function preflightT3Native(
+  cwd: string,
+  dependencies: T3NativeDependencies = {},
+  settings: T3Settings = {},
+  dryRun = false,
+): Promise<T3NativeEnvironment> {
+  const cli = settings.cli ?? "t3";
+  const cliVersion = await readT3CliVersion(cli, cwd, dependencies);
   const discovered = await discoverT3Environment(settings, dependencies);
   const descriptor = await t3Http(
     discovered.origin,
@@ -458,6 +478,11 @@ export async function preflightT3Native(
   )("/.well-known/t3/environment");
   verifyT3Version(descriptor.serverVersion);
   verifyT3Protocol(descriptor);
+  if (cliVersion !== descriptor.serverVersion)
+    return fail(
+      "T3_VERSION_MISMATCH",
+      "The official T3 CLI and selected server versions differ. Install the matching CLI or select the matching environment with --t3-cli / --t3-base-dir.",
+    );
   const environmentId = identifier(descriptor.environmentId);
   if (
     !environmentId ||
@@ -492,6 +517,11 @@ export async function preflightT3Native(
         !(record(config.auth).sessionMethods as unknown[]).includes("bearer-access-token")
       )
         return fail("T3_AUTH_UNSUPPORTED", "T3 does not advertise bearer session authentication.");
+      if (!Array.isArray(config.providers))
+        return fail(
+          "T3_CATALOG_INVALID",
+          "T3 did not return a compatible provider catalog. Update Arashi or select a compatible T3 release.",
+        );
       const session = await request("/api/auth/session");
       if (
         session.authenticated !== true ||

@@ -83,7 +83,7 @@ describe("T3 handoff input", () => {
   });
 });
 
-async function handoffFixture() {
+async function handoffFixture(serverVersion = "0.0.43") {
   const { common, workspacePath } = await fixture();
   const projects: Record<string, unknown>[] = [];
   const threads: Record<string, unknown>[] = [];
@@ -98,16 +98,18 @@ async function handoffFixture() {
     runProcess: async (command) => ({
       exitCode: 0,
       stderr: "SECRET",
-      stdout: command.includes("issue")
-        ? JSON.stringify({ sessionId: "session-1", token: "SECRET" })
-        : "revoked",
+      stdout: command.includes("--version")
+        ? `t3 v${serverVersion}`
+        : command.includes("issue")
+          ? JSON.stringify({ sessionId: "session-1", token: "SECRET" })
+          : "revoked",
     }),
     fetch: (async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (path.endsWith("environment"))
         return Response.json({
           environmentId: "environment-1",
-          serverVersion: "0.0.43",
+          serverVersion,
           orchestrationProtocolVersion: 1,
         });
       if (path.endsWith("snapshot")) return Response.json({ projects, threads });
@@ -154,7 +156,7 @@ async function handoffFixture() {
   };
   const input = {
     branch: "feature/test",
-    environment: nativeEnvironment(),
+    environment: { ...nativeEnvironment(), serverVersion },
     dryRun: false,
     request: (await resolveT3HandoffRequest({ t3: "TOP SECRET PROMPT" }))!,
     workspacePath,
@@ -179,6 +181,47 @@ async function handoffFixture() {
 }
 
 describe("native T3 receipt protection", () => {
+  test("dispatches on a newer stable release with the supported protocol", async () => {
+    const fixture = await handoffFixture("0.0.44");
+    await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({
+      status: "succeeded",
+      environment: { serverVersion: "0.0.44" },
+    });
+    expect(fixture.commands.map((command) => command.type)).toEqual([
+      "project.create",
+      "thread.create",
+      "thread.turn.start",
+    ]);
+  });
+  test("server upgrades after preflight fail before session issuance or remote mutation", async () => {
+    const fixture = await handoffFixture("0.0.44");
+    fixture.input.environment.serverVersion = "0.0.43";
+    const authentication: string[][] = [];
+    const run = fixture.input.dependencies.runProcess!;
+    fixture.input.dependencies.runProcess = async (command, options) => {
+      authentication.push([...command]);
+      return run(command, options);
+    };
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_ENVIRONMENT_CHANGED",
+    });
+    expect(authentication).toEqual([]);
+    expect(fixture.commands).toEqual([]);
+  });
+  test("CLI upgrades after preflight fail before session issuance or remote mutation", async () => {
+    const fixture = await handoffFixture();
+    const authentication: string[][] = [];
+    fixture.input.dependencies.runProcess = async (command) => {
+      authentication.push([...command]);
+      return { exitCode: 0, stderr: "", stdout: "t3 v0.0.44" };
+    };
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_VERSION_MISMATCH",
+    });
+    expect(authentication).toEqual([["t3", "--version"]]);
+    expect(fixture.commands).toEqual([]);
+  });
+
   test("reuses a project whose directory alias identifies the exact checkout", async () => {
     const fixture = await handoffFixture();
     const alias = `${fixture.input.workspacePath}-alias`;
@@ -425,7 +468,9 @@ describe("native T3 receipt protection", () => {
     fixture.input.dependencies.runProcess = async (command) => ({
       exitCode: command.includes("revoke") ? -1 : 0,
       stderr: "SECRET",
-      stdout: JSON.stringify({ sessionId: "session-1", token: "SECRET" }),
+      stdout: command.includes("--version")
+        ? "t3 v0.0.43"
+        : JSON.stringify({ sessionId: "session-1", token: "SECRET" }),
     });
     await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       code: "T3_AUTH_CLEANUP_FAILED",

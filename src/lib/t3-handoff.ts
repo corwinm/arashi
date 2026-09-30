@@ -15,6 +15,7 @@ import {
   t3Http,
   verifyT3Protocol,
   verifyT3Version,
+  readT3CliVersion,
   withT3Session,
   type T3NativeDependencies,
   type T3NativeEnvironment,
@@ -695,23 +696,32 @@ export const dispatchT3Handoff = async (input: {
     };
     await save();
     try {
+      const descriptor = await t3Http(
+        input.environment.origin,
+        undefined,
+        dependencies,
+      )("/.well-known/t3/environment");
+      verifyT3Version(descriptor.serverVersion);
+      verifyT3Protocol(descriptor);
+      if (
+        descriptor.environmentId !== receipt.native!.environmentId ||
+        descriptor.serverVersion !== input.environment.serverVersion
+      )
+        throw new T3HandoffError(
+          "T3_ENVIRONMENT_CHANGED",
+          "The selected T3 environment changed after preflight.",
+        );
+      const cliVersion = await readT3CliVersion(input.environment.cli, workspacePath, dependencies);
+      if (cliVersion !== descriptor.serverVersion)
+        throw new T3HandoffError(
+          "T3_VERSION_MISMATCH",
+          "The official T3 CLI changed after preflight. Select matching CLI/server versions before retrying.",
+        );
       return await withT3Session(
         input.environment,
         workspacePath,
         dependencies,
         async (request, token) => {
-          const descriptor = await t3Http(
-            input.environment.origin,
-            undefined,
-            dependencies,
-          )("/.well-known/t3/environment");
-          verifyT3Version(descriptor.serverVersion);
-          verifyT3Protocol(descriptor);
-          if (descriptor.environmentId !== receipt.native!.environmentId)
-            throw new T3HandoffError(
-              "T3_ENVIRONMENT_CHANGED",
-              "The selected T3 environment changed after preflight.",
-            );
           const liveConfig = await (dependencies.getConfig ?? readT3Config)(
             input.environment.origin,
             token,

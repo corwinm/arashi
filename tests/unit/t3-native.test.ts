@@ -33,12 +33,73 @@ async function runtimeFixture() {
 
 describe("official T3 discovery and auth", () => {
   test("bounds the official release and wire protocol explicitly", () => {
-    expect(() => verifyT3Version("0.0.43")).not.toThrow();
-    for (const version of ["0.1.0", "0.0.42", "0.0.44", "0.0.43-nightly"])
+    for (const version of ["0.0.43", "0.0.44", "0.0.99", "0.1.0", "1.0.0"])
+      expect(() => verifyT3Version(version)).not.toThrow();
+    for (const version of [
+      undefined,
+      "0.0.42",
+      "0.0.43-nightly",
+      "0.0.44+build",
+      "00.0.44",
+      "999999999999999999.0.0",
+    ])
       expect(() => verifyT3Version(version)).toThrow();
     expect(() => verifyT3Protocol({ orchestrationProtocolVersion: 1 })).not.toThrow();
     expect(() => verifyT3Protocol({ orchestrationProtocolVersion: 2 })).toThrow();
   });
+  test.each([
+    { cli: "0.0.44", server: "0.0.44", protocol: 1, catalog: true, error: undefined },
+    { cli: "0.0.43", server: "0.0.44", protocol: 1, catalog: true, error: "T3_VERSION_MISMATCH" },
+    { cli: "0.0.44", server: "0.0.43", protocol: 1, catalog: true, error: "T3_VERSION_MISMATCH" },
+    {
+      cli: "0.0.44",
+      server: "0.0.44",
+      protocol: 2,
+      catalog: true,
+      error: "T3_PROTOCOL_UNSUPPORTED",
+    },
+    { cli: "0.0.44", server: "0.0.44", protocol: 1, catalog: false, error: "T3_CATALOG_INVALID" },
+  ])(
+    "checks newer release compatibility before mutation: $cli / $server / $protocol / $catalog",
+    async ({ cli, server, protocol, catalog, error }) => {
+      const fixture = await runtimeFixture();
+      const commands: string[][] = [];
+      const dependencies: T3NativeDependencies = {
+        runProcess: async (command) => {
+          commands.push([...command]);
+          return {
+            exitCode: 0,
+            stderr: "",
+            stdout: command.includes("--version")
+              ? `t3 v${cli}`
+              : JSON.stringify({ token: "SECRET", sessionId: "owned-session" }),
+          };
+        },
+        getConfig: async () => (catalog ? nativeConfig() : { auth: nativeConfig().auth }),
+        fetch: (async (url) => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("environment"))
+            return Response.json({
+              environmentId: "environment-1",
+              serverVersion: server,
+              orchestrationProtocolVersion: protocol,
+              platform: { os: process.platform === "win32" ? "windows" : process.platform },
+            });
+          if (path.endsWith("session"))
+            return Response.json({
+              authenticated: true,
+              scopes: ["orchestration:read", "orchestration:operate"],
+            });
+          return Response.json({ projects: [], threads: [] });
+        }) as typeof fetch,
+      };
+      const preflight = preflightT3Native(".", dependencies, { baseDir: fixture.baseDir });
+      if (error) await expect(preflight).rejects.toMatchObject({ code: error });
+      else await expect(preflight).resolves.toMatchObject({ serverVersion: "0.0.44" });
+      if (error && error !== "T3_CATALOG_INVALID") expect(commands).toEqual([["t3", "--version"]]);
+      else expect(commands.at(-1)).toContain("revoke");
+    },
+  );
   test("uses only selected runtime discovery; rejects malformed, remote, and credential-bearing endpoints", async () => {
     const fixture = await runtimeFixture();
     await expect(discoverT3Environment({ baseDir: fixture.baseDir })).resolves.toMatchObject({
