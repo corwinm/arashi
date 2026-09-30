@@ -195,7 +195,7 @@ export const executePrune = async (options: PruneOptions): Promise<number> => {
       );
     } else {
       logError("Not in an arashi workspace");
-      info("Run 'arashi init' to initialize a workspace");
+      info("Run 'aw init' to initialize a workspace");
     }
     return USAGE_EXIT_CODE;
   }
@@ -282,9 +282,9 @@ export const createCommand = (): Command =>
       "after",
       `
 Examples:
-  $ arashi prune --dry-run       # Show stale worktree metadata
-  $ arashi prune                 # Prune stale worktree metadata now
-  $ arashi prune --json          # Automation-safe prune result
+  $ aw prune --dry-run       # Show stale worktree metadata
+  $ aw prune                 # Prune stale worktree metadata now
+  $ aw prune --json          # Automation-safe prune result
       `,
     )
     .action(async (options: PruneOptions) => {

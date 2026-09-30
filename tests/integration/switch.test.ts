@@ -910,7 +910,7 @@ describe("switch command integration", () => {
       ),
     ).rejects.toMatchObject({
       code: "NO_MATCHES",
-      message: `No worktree exists at exact path \`${resolvedPath("/workspace/missing")}\`. Run \`arashi list\` to see available worktree paths.`,
+      message: `No worktree exists at exact path \`${resolvedPath("/workspace/missing")}\`. Run \`aw list\` to see available worktree paths.`,
     });
   });
 

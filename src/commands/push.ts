@@ -47,7 +47,7 @@ export const executePush = async (options: PushCommandOptions): Promise<PushSumm
         throw error;
       }
       throw new CliUsageError(
-        'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+        'Not in an arashi workspace. Run "aw init" to initialize a workspace',
       );
     },
   );

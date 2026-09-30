@@ -133,7 +133,7 @@ export async function selectSwitchCandidate(
 
   if (!options.interactive) {
     throw new SwitchCommandError(
-      `Found ${candidates.length} matching worktrees. Provide a more specific filter, for example: arashi switch <branch>.`,
+      `Found ${candidates.length} matching worktrees. Provide a more specific filter, for example: aw switch <branch>.`,
       SwitchCommandErrorCode.AMBIGUOUS_NON_INTERACTIVE,
       {
         matchCount: candidates.length,

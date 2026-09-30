@@ -176,7 +176,7 @@ describe("move planning", () => {
           summary: "1 modified",
         },
       ],
-      command: "arashi move --to feature",
+      command: "aw move --to feature",
       target: "feature",
     });
   });

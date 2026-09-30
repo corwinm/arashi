@@ -880,7 +880,7 @@ describe("repositoryStatusToDoctorFindings", () => {
           remoteRef: "origin/develop",
           source: "repository-config",
         }),
-        suggestedCommands: expect.arrayContaining(["arashi pull"]),
+        suggestedCommands: expect.arrayContaining(["aw pull"]),
       }),
     );
     expect(findings).not.toContainEqual(

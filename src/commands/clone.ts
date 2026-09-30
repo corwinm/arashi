@@ -333,7 +333,7 @@ export async function executeClone(
   let selectedRepositories = missingWithUrls;
   if (!options.all) {
     if (!interactive) {
-      throw new Error("Interactive selection requires a TTY. Use `arashi clone --all` instead.");
+      throw new Error("Interactive selection requires a TTY. Use `aw clone --all` instead.");
     }
 
     const selectionChoices: Choice<string>[] = missingWithUrls.map((repository) => ({

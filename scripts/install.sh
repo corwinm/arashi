@@ -1380,7 +1380,7 @@ prompt_shell_integration() {
   fi
 
   printf '\n' >&2
-  printf 'Install shell integration for %s so `arashi switch --cd` can change the current shell directory? [Y/n] ' "$shell_name" >&2
+  printf 'Install shell integration for %s so `aw switch --cd` can change the current shell directory? [Y/n] ' "$shell_name" >&2
 
   local response
   if [ -r /dev/tty ]; then
@@ -1413,7 +1413,7 @@ configure_shell_integration() {
   rc_file="$(resolve_shell_rc_file "$shell_name")"
   if [ -L "$rc_file" ]; then
     warn "Skipping shell integration for symbolic link: $rc_file"
-    warn "Run 'arashi shell install' manually after choosing a regular startup file"
+    warn "Run 'aw shell install' manually after choosing a regular startup file"
     return
   fi
   integration_block="$(build_shell_integration_block "$shell_name")" || {
@@ -1423,14 +1423,14 @@ configure_shell_integration() {
 
   mkdir -p "$(dirname "$rc_file")" 2>/dev/null || {
     warn "Could not create shell config directory for $rc_file"
-    warn "Run 'arashi shell install' manually after installation"
+    warn "Run 'aw shell install' manually after installation"
     return
   }
 
   if [ ! -f "$rc_file" ]; then
     : > "$rc_file" 2>/dev/null || {
       warn "Could not create shell config file: $rc_file"
-      warn "Run 'arashi shell install' manually after installation"
+      warn "Run 'aw shell install' manually after installation"
       return
     }
   fi
@@ -1442,7 +1442,7 @@ configure_shell_integration() {
 
   upsert_shell_integration_block "$rc_file" "$integration_block" || {
     warn "Failed to update shell integration in $rc_file"
-    warn "Run 'arashi shell install' manually after installation"
+    warn "Run 'aw shell install' manually after installation"
     return
   }
 

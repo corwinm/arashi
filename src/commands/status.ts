@@ -359,7 +359,7 @@ export const checkRepoStatus = async (
       baseBranch: null,
       branch: createEmptyBranchTrackingInfo(true),
       defaultBranch: null,
-      error: `Repository is missing at ${path}. Run \`arashi clone\` to clone missing repositories.`,
+      error: `Repository is missing at ${path}. Run \`aw clone\` to clone missing repositories.`,
       files: [],
       freshness,
       name,
@@ -925,7 +925,7 @@ export const formatSummary = (statuses: RepoStatus[]): string => {
 };
 
 export const isMissingRepositoryStatus = (status: RepoStatus): boolean =>
-  status.error?.includes("arashi clone") === true && status.files.length === ZERO;
+  status.error?.includes("aw clone") === true && status.files.length === ZERO;
 
 export const filterHumanVisibleStatuses = (
   statuses: RepoStatus[],
@@ -1036,8 +1036,8 @@ export const formatShortLine = (status: RepoStatus): string => {
   // Add status
   if (status.error) {
     const colorFn = getStatusColor(false)(true);
-    if (status.error.includes("arashi clone")) {
-      line += colorFn("✗ missing (run arashi clone)");
+    if (status.error.includes("aw clone")) {
+      line += colorFn("✗ missing (run aw clone)");
     } else {
       line += colorFn("✗ error");
     }
@@ -1141,7 +1141,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
       );
     } else {
       logError("Cannot use --verbose and --short together");
-      info("Use 'arashi status --help' for usage information");
+      info("Use 'aw status --help' for usage information");
     }
     process.exit(USAGE_EXIT_CODE);
   }
@@ -1228,7 +1228,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
       );
     } else {
       logError("Not in an arashi workspace");
-      info("Run 'arashi init' to initialize a workspace");
+      info("Run 'aw init' to initialize a workspace");
     }
     process.exit(USAGE_EXIT_CODE);
   }
@@ -1406,11 +1406,11 @@ export const createCommand = (): Command =>
       "after",
       `
 Examples:
-  $ arashi status                    # Default output with colors
-  $ arashi status --verbose          # Full git status for each repo
-  $ arashi status --short            # One line per repository
-  $ arashi status --local            # Local refs only; no network refresh
-  $ arashi status --group docs       # Only check repositories in a group
+  $ aw status                    # Default output with colors
+  $ aw status --verbose          # Full git status for each repo
+  $ aw status --short            # One line per repository
+  $ aw status --local            # Local refs only; no network refresh
+  $ aw status --group docs       # Only check repositories in a group
       `,
     )
     .action(statusCommand);

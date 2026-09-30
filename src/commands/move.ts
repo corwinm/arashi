@@ -124,9 +124,9 @@ export function createCommand(): Command {
       "after",
       `
 Examples:
-  $ arashi move --to feature-branch
-  $ arashi move --from main --to feature-branch
-  $ arashi move --from feature-branch
+  $ aw move --to feature-branch
+  $ aw move --from main --to feature-branch
+  $ aw move --from feature-branch
 `,
     )
     .action(async (options: MoveCommandOptions) => {

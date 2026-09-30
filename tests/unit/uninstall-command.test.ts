@@ -119,7 +119,7 @@ describe("uninstall command consent", () => {
           installDirectory: "/owned",
           plan: emptyDirectPlan,
           shellPlan: async () => {
-            throw new Error("Unable to detect a supported shell for `arashi shell uninstall`.");
+            throw new Error("Unable to detect a supported shell for `aw shell uninstall`.");
           },
           write: () => {},
         },

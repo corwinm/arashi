@@ -474,7 +474,7 @@ describe("CLI JSON output contract", () => {
       schemaVersion: 1,
       warnings: [],
     });
-    expect(JSON.stringify(parsed)).toContain("arashi prune");
+    expect(JSON.stringify(parsed)).toContain("aw prune");
   });
 
   test("status --json returns exactly one failure envelope outside a workspace", async () => {

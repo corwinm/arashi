@@ -322,7 +322,7 @@ export class ConfigError extends Error {
  */
 export class ConfigNotFoundError extends ConfigError {
   constructor(path: string) {
-    super(`Configuration file not found at ${path}. Run "arashi init" to create it.`, undefined, {
+    super(`Configuration file not found at ${path}. Run "aw init" to create it.`, undefined, {
       path,
     });
     this.name = "ConfigNotFoundError";
@@ -1851,7 +1851,7 @@ export const addRepo = async (
   // Check if repository name already exists
   if (config.repos[name] !== undefined) {
     throw new ConfigError(
-      `Repository "${name}" already exists in configuration. Use "arashi clone" to materialize missing local repositories.`,
+      `Repository "${name}" already exists in configuration. Use "aw clone" to materialize missing local repositories.`,
       undefined,
       { existingConfig: config.repos[name], name },
     );

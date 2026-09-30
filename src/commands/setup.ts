@@ -52,9 +52,7 @@ const executeSetup = async (options: SetupCommandOptions): Promise<SetupRunSumma
     if (error instanceof ConfiguredWorkspaceRequiredError) {
       throw error;
     }
-    throw new CliUsageError(
-      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
-    );
+    throw new CliUsageError('Not in an arashi workspace. Run "aw init" to initialize a workspace');
   });
 
   const repositoriesResult = await loadWorkspaceRepositories(workspaceRoots).catch(

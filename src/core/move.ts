@@ -494,7 +494,7 @@ export const buildDirtyGuidance = (
   const targetRef = target.branch ?? target.primaryPath;
   return {
     changedRepositories,
-    command: `arashi move --to ${targetRef}`,
+    command: `aw move --to ${targetRef}`,
     target: targetRef,
   };
 };

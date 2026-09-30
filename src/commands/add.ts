@@ -112,7 +112,7 @@ const maybeRunCloneFallback = async (
   }
 
   const fallback = await promptConfirm(
-    "Repository is already configured. Run `arashi clone` now?",
+    "Repository is already configured. Run `aw clone` now?",
     true,
   );
   if (fallback.status === "ok" && fallback.value) {
@@ -696,7 +696,7 @@ export const executeAdd = async (
     if (!hasConfig) {
       await throwIfStandaloneWorkspace("add", workspaceRoot);
       throw new AddCommandError(
-        'Workspace not initialized. Run "arashi init" first.',
+        'Workspace not initialized. Run "aw init" first.',
         AddCommandErrorCode.CONFIG_UPDATE_FAILED,
         { configPath: getConfigPath(workspaceRoot) },
       );
@@ -1461,8 +1461,8 @@ const displayError = (error: AddCommandError): void => {
     console.log("  - File:  file:///path/to/repo.git");
   } else if (error.code === AddCommandErrorCode.DUPLICATE_NAME) {
     console.log("Solutions:");
-    console.log("  1. Clone the configured repository if it is missing locally: arashi clone");
-    console.log("  2. Inspect current workspace status: arashi status");
+    console.log("  1. Clone the configured repository if it is missing locally: aw clone");
+    console.log("  2. Inspect current workspace status: aw status");
   } else if (error.code === AddCommandErrorCode.CLONE_FAILED) {
     console.log("Common causes:");
     console.log("  - Network connectivity issues");

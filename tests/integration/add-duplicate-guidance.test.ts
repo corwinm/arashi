@@ -52,7 +52,7 @@ describe("add command duplicate guidance", () => {
     const output = `${stdout}\n${stderr}`;
 
     expect(exitCode).toBe(2);
-    expect(output).toContain("arashi clone");
+    expect(output).toContain("aw clone");
     expect(output).not.toContain("arashi remove");
     expect(output).not.toContain("Use a different name");
   });

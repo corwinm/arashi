@@ -112,7 +112,7 @@ export class NotInRepositoryError extends ListCommandError {
  */
 export class ConfigurationMissingError extends ListCommandError {
   constructor(path: string) {
-    super(`Configuration not found at ${path}. Run "arashi init" first.`, { path });
+    super(`Configuration not found at ${path}. Run "aw init" first.`, { path });
     this.name = "ConfigurationMissingError";
   }
 }

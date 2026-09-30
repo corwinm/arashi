@@ -269,7 +269,7 @@ const executeExec = async (
   options: ExecCommandOptions,
 ): Promise<ExecSummary> => {
   if (childCommand.length === ZERO) {
-    throw new CliUsageError("Missing child command. Use: arashi exec [options] -- <command>");
+    throw new CliUsageError("Missing child command. Use: aw exec [options] -- <command>");
   }
 
   const jobs = parseJobs(options.jobs);
@@ -279,7 +279,7 @@ const executeExec = async (
         throw error;
       }
       throw new CliUsageError(
-        'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+        'Not in an arashi workspace. Run "aw init" to initialize a workspace',
       );
     },
   );

@@ -1321,14 +1321,14 @@ export function createCommand(): Command {
       "after",
       `
 Examples:
-  $ arashi create feature-branch
-  $ arashi create feature-branch --group docs
-  $ arashi create feature-branch --only repo1,repo2
-  $ arashi create feature-branch --conflict REUSE_EXISTING
-  $ arashi create feature-branch --dry-run
+  $ aw create feature-branch
+  $ aw create feature-branch --group docs
+  $ aw create feature-branch --only repo1,repo2
+  $ aw create feature-branch --conflict REUSE_EXISTING
+  $ aw create feature-branch --dry-run
   $ aw create feature-branch --t3 "Implement the accepted task"
   $ aw create feature-branch --t3 --prompt-file task.md
-  $ arashi create feature-branch --no-launch --no-switch --json
+  $ aw create feature-branch --no-launch --no-switch --json
 
 Configured create launch values: none | auto | sesh | herdr
 Precedence: --tmux/--sesh/--herdr, --tab/--launch, --no-launch, matching configured scope, then none.
@@ -1671,7 +1671,7 @@ export async function executeCreate(
   }).catch((loadError): never => {
     if (loadError instanceof ConfigNotFoundError) {
       throw new CreateSetupError(
-        'Workspace configuration not found. Run "arashi init" from a checked-out worktree and retry.',
+        'Workspace configuration not found. Run "aw init" from a checked-out worktree and retry.',
       );
     }
 
@@ -1820,7 +1820,7 @@ export async function executeCreate(
 
   if (allRepositories.length === 0) {
     error("No repositories found in configuration");
-    info('Run "arashi add <path>" to add repositories');
+    info('Run "aw add <path>" to add repositories');
     process.exit(ERROR_EXIT_CODE);
   }
 
@@ -2152,7 +2152,7 @@ export async function executeCreate(
         await restoreIgnore(managedIgnore);
       }
       throw new CreateSetupError(
-        "Tracked managed-ignore changes from a bare repository require an existing linked worktree. Run arashi init from a checked-out worktree first.",
+        "Tracked managed-ignore changes from a bare repository require an existing linked worktree. Run aw init from a checked-out worktree first.",
       );
     }
   } finally {

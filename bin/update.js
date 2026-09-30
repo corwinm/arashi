@@ -383,7 +383,7 @@ async function runNpmManagedUpdateCore(argv = [], options = {}) {
     return 0;
   } catch (error) {
     errorLog(`Package updated, but binary refresh failed: ${error instanceof Error ? error.message : String(error)}`);
-    errorLog("Run `arashi install` to retry the binary installation, or download a release manually.");
+    errorLog("Run `aw install` to retry the binary installation, or download a release manually.");
     return 1;
   }
 }

@@ -188,7 +188,7 @@ export function detectNpmGlobalRoot(options = {}) {
 
 async function runPackageUninstall(argv, options) {
   if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
-    (options.log ?? console.log)(`Usage: arashi uninstall [options]
+    (options.log ?? console.log)(`Usage: aw uninstall [options]
 
 Conservatively remove a proven Arashi installation
 

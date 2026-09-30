@@ -179,7 +179,7 @@ const summarizeRepo = (status: RepoStatus): HandoffRepositorySummary => ({
 });
 
 const collectGeneratedNextCommands = (statuses: RepoStatus[]): string[] => {
-  const commands = ["arashi status"];
+  const commands = ["aw status"];
   if (
     statuses.some(
       (status) =>
@@ -194,7 +194,7 @@ const collectGeneratedNextCommands = (statuses: RepoStatus[]): string[] => {
         status.refreshWarning,
     )
   ) {
-    commands.push("arashi status --verbose");
+    commands.push("aw status --verbose");
   }
   return commands;
 };
@@ -453,7 +453,7 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
       );
     } else {
       logError(message);
-      info("Run 'arashi init' to initialize a workspace before creating a handoff report");
+      info("Run 'aw init' to initialize a workspace before creating a handoff report");
     }
     process.exit(USAGE_EXIT_CODE);
   }
@@ -561,9 +561,9 @@ export const createCommand = (): Command => {
       "after",
       `
 Examples:
-  $ arashi handoff --link https://github.com/corwinm/arashi-arashi/issues/186
-  $ arashi handoff --validation "pnpm run test — passed" --todo "watch CI"
-  $ arashi handoff --json --next-command "arashi status --verbose"
+  $ aw handoff --link https://github.com/corwinm/arashi-arashi/issues/186
+  $ aw handoff --validation "pnpm run test — passed" --todo "watch CI"
+  $ aw handoff --json --next-command "aw status --verbose"
       `,
     )
     .action(runHandoff);

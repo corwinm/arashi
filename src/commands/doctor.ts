@@ -155,7 +155,7 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
               message: `${worktreesBase} is not effectively ignored`,
               scope: context.mainRoot,
               severity: "warning" as const,
-              suggestedCommands: ["arashi init --zero-config"],
+              suggestedCommands: ["aw init --zero-config"],
             },
           ]
         : []),
@@ -172,7 +172,7 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
           message: `Repository '${repository.name}' has stale worktree metadata for ${worktree.path}.`,
           scope: `repository:${repository.name}`,
           severity: "warning" as const,
-          suggestedCommands: ["arashi prune --dry-run", "arashi prune"],
+          suggestedCommands: ["aw prune --dry-run", "aw prune"],
         })),
       ),
     ];
@@ -257,8 +257,8 @@ export const createCommand = (): Command =>
       "after",
       `
 Examples:
-  $ arashi doctor          # Human-readable workspace health check
-  $ arashi doctor --json   # Automation-safe JSON diagnostics
+  $ aw doctor          # Human-readable workspace health check
+  $ aw doctor --json   # Automation-safe JSON diagnostics
       `,
     )
     .action(async (options: DoctorOptions) => {
