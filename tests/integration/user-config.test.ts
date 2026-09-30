@@ -348,7 +348,11 @@ describe("user configuration integration", () => {
   test("effective inspection reports files and supports CLI provenance", async () => {
     const { home, root } = await repository("inspect");
     await writeUserConfig(home, {
-      defaults: { create: { launch: "sesh", switch: true }, switch: { mode: "cd" } },
+      defaults: {
+        create: { launch: "sesh", switch: true },
+        switch: { mode: "cd" },
+        t3: { provider: "codex", model: "gpt-6.1-sol", effort: "medium" },
+      },
     });
     const result = await arashi(
       root,
@@ -363,6 +367,10 @@ describe("user configuration integration", () => {
         "defaults.create.launch": { source: "cli", value: "none" },
         "defaults.create.switch": { source: "cli", value: false },
         "defaults.switch.mode": { source: "user", value: "cd" },
+        "defaults.t3.provider": { source: "user", value: "codex" },
+        "defaults.t3.model": { source: "user", value: "gpt-6.1-sol" },
+        "defaults.t3.effort": { source: "user", value: "medium" },
+        "defaults.t3.baseDir": { source: "built-in", value: null },
         worktreesDir: { source: "built-in" },
         "defaults.editors.vscode.create.switch": { source: "built-in", value: false },
         "defaults.editors.vscode.create.launch": { source: "built-in", value: "none" },

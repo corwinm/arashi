@@ -1,3 +1,4 @@
+import { mergeT3Settings } from "../lib/t3-settings.ts";
 /**
  * CLI Command: Create Worktree
  *
@@ -97,7 +98,7 @@ import {
 } from "../lib/base-branch-policy.ts";
 import {
   dispatchT3Handoff,
-  preflightT3Bridge,
+  preflightT3Native,
   resolveT3HandoffRequest,
   T3HandoffError,
   T3_PERMISSION_MODES,
@@ -536,6 +537,10 @@ const printT3HandoffResult = (handoff: T3HandoffResult): void => {
   }
   info(`T3 workspace: ${handoff.workspacePath}`);
   info(`T3 permission: ${handoff.permission}`);
+  if (handoff.selection)
+    info(
+      `T3 selection: ${handoff.selection.instanceId} / ${handoff.selection.model} (effort ${handoff.selection.options.find((option) => ["effort", "reasoningEffort"].includes(option.id))?.value ?? "provider default"})`,
+    );
   info(
     `T3 environment: ${handoff.environment.id ?? "unavailable"} (server ${handoff.environment.serverVersion ?? "unknown"})`,
   );
@@ -608,6 +613,11 @@ export interface CreateCommandOptions {
 
   /** Start a T3 Code thread, optionally using the supplied inline task. */
   t3?: boolean | string;
+  t3BaseDir?: string;
+  t3Cli?: string;
+  t3Provider?: string;
+  t3Model?: string;
+  t3Effort?: string;
 
   /** Read the T3 task from a UTF-8 file. */
   promptFile?: string;
@@ -810,7 +820,7 @@ export interface CreateCommandDependencies {
   /** Testable effective stdin terminal capability */
   stdinIsTTY?: boolean;
   t3?: T3HandoffDependencies;
-  preflightT3Bridge?: typeof preflightT3Bridge;
+  preflightT3Native?: typeof preflightT3Native;
   dispatchT3Handoff?: typeof dispatchT3Handoff;
   resolvePostCreateDirtyGuidance?: typeof resolvePostCreateDirtyGuidance;
   executeMovePlan?: typeof executeMovePlan;
@@ -1286,6 +1296,14 @@ export function createCommand(): Command {
     .option("--herdr", "Launch using Herdr mode (implies --launch)")
     .option("--tmux", "Launch using plain tmux mode (implies --launch and --switch)")
     .option("--t3 [task]", "Hand the created parent workspace to a new T3 Code thread")
+    .option("--t3-base-dir <path>", "Select the local official T3 data directory (requires --t3)")
+    .option("--t3-cli <path>", "Select the installed official t3 executable (requires --t3)")
+    .option(
+      "--t3-provider <id>",
+      "Select a T3 provider instance or unambiguous driver (requires --t3)",
+    )
+    .option("--t3-model <model>", "Select a model from the T3 catalog (requires --t3)")
+    .option("--t3-effort <effort>", "Select supported model reasoning effort (requires --t3)")
     .option("--prompt-file <path>", "Read the T3 task from a UTF-8 file (requires --t3)")
     .addOption(permissionOption)
     .addOption(conflictOption)
@@ -1434,6 +1452,14 @@ export async function executeCreate(
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
   const t3Request = await resolveT3HandoffRequest(options);
+  if (
+    !t3Request &&
+    [options.t3BaseDir, options.t3Cli, options.t3Provider, options.t3Model, options.t3Effort].some(
+      (value) => value !== undefined,
+    )
+  ) {
+    throw new T3HandoffError("T3_OPTIONS_REQUIRE_T3", "T3 selection options require --t3.");
+  }
   if (
     t3Request &&
     (options.launch === true ||
@@ -1586,10 +1612,6 @@ export async function executeCreate(
     return ZERO;
   }
 
-  const t3BridgeVersion = t3Request
-    ? await (deps.preflightT3Bridge ?? preflightT3Bridge)(process.cwd(), deps.t3)
-    : null;
-
   const resolveInvocationContext =
     deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
   const resolveIgnoreWorkspaceRoot =
@@ -1670,6 +1692,26 @@ export async function executeCreate(
     workspaceWorktreesDirAuthored: loadedConfig.authoredWorktreesDir === true,
   });
   const arashiConfig = effectivePersonalConfig.config;
+  const t3Settings = t3Request
+    ? mergeT3Settings(
+        {
+          ...(options.t3BaseDir !== undefined ? { baseDir: options.t3BaseDir } : {}),
+          ...(options.t3Cli !== undefined ? { cli: options.t3Cli } : {}),
+          ...(options.t3Provider !== undefined ? { provider: options.t3Provider } : {}),
+          ...(options.t3Model !== undefined ? { model: options.t3Model } : {}),
+          ...(options.t3Effort !== undefined ? { effort: options.t3Effort } : {}),
+        },
+        arashiConfig.defaults?.t3,
+      )
+    : {};
+  const t3Environment = t3Request
+    ? await (deps.preflightT3Native ?? preflightT3Native)(
+        process.cwd(),
+        deps.t3,
+        t3Settings,
+        options.dryRun === true,
+      )
+    : null;
 
   // 2. Discover repositories (child repos in reposDir)
   // Convert reposDir to absolute path since it may be relative (e.g., "./repos")
@@ -2152,7 +2194,7 @@ export async function executeCreate(
   let t3HandoffError: T3HandoffError | null = null;
   if (
     t3Request &&
-    t3BridgeVersion &&
+    t3Environment &&
     !summary.rolledBack &&
     summary.failureCount === ZERO &&
     (options.dryRun !== true || summary.dryRunOutcome?.overallStatus === "actionable") &&
@@ -2174,7 +2216,7 @@ export async function executeCreate(
       }
       t3Handoff = await (deps.dispatchT3Handoff ?? dispatchT3Handoff)({
         branch: branchName,
-        bridgeVersion: t3BridgeVersion,
+        environment: t3Environment,
         dependencies: deps.t3,
         dryRun: options.dryRun === true,
         request: t3Request,
@@ -2194,7 +2236,8 @@ export async function executeCreate(
           ? "dispatching"
           : "indeterminate";
       t3Handoff = handoffError.result ?? {
-        bridgeVersion: t3BridgeVersion,
+        adapter: "native",
+        adapterVersion: "1",
         dispatch: { status },
         environment: { id: null, serverVersion: null },
         error: { code: handoffError.code, message: handoffError.message },

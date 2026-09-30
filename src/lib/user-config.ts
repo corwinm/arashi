@@ -1,3 +1,4 @@
+import type { T3Settings } from "./t3-settings.ts";
 import { createHash } from "crypto";
 import { lstatSync, realpathSync } from "fs";
 import { homedir } from "os";
@@ -242,6 +243,16 @@ export const resolveEffectivePersonalConfig = async (options: {
   sources["defaults.create.launch"] = createLaunchSource;
   sources["defaults.switch.mode"] = switchModeSource;
 
+  const t3Defaults: T3Settings = {};
+  for (const field of ["baseDir", "cli", "provider", "model", "effort"] as const) {
+    const [value, source] = optionalLeaf(
+      workspace.defaults?.t3?.[field],
+      user?.defaults?.t3?.[field],
+    );
+    sources[`defaults.t3.${field}`] = source;
+    if (value !== undefined) t3Defaults[field] = value;
+  }
+
   const editorDefaults: NonNullable<CommandDefaultsConfig["editors"]> = {};
   for (const host of ["vscode", "cursor", "kiro"] as const) {
     const [editorSwitch, editorSwitchSource] = optionalLeaf(
@@ -303,7 +314,8 @@ export const resolveEffectivePersonalConfig = async (options: {
       createSwitch !== undefined ||
       createLaunch !== undefined ||
       switchMode !== undefined ||
-      Object.keys(editorDefaults).length > 0
+      Object.keys(editorDefaults).length > 0 ||
+      Object.keys(t3Defaults).length > 0
         ? {
             ...(createSwitch === undefined && createLaunch === undefined
               ? {}
@@ -314,6 +326,7 @@ export const resolveEffectivePersonalConfig = async (options: {
                   },
                 }),
             ...(Object.keys(editorDefaults).length > 0 ? { editors: editorDefaults } : {}),
+            ...(Object.keys(t3Defaults).length > 0 ? { t3: t3Defaults } : {}),
             ...(switchMode === undefined ? {} : { switch: { mode: switchMode } }),
           }
         : undefined,

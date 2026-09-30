@@ -1152,9 +1152,9 @@ describe("create defaults integration", () => {
             dispatchT3Handoff: async (input) => {
               dispatchedWorkspace = input.workspacePath;
               return {
-                bridgeVersion: input.bridgeVersion,
+                bridgeVersion: input.environment.serverVersion,
                 dispatch: { status: "succeeded" },
-                environment: { id: "environment-1", serverVersion: "0.0.42" },
+                environment: { id: "environment-1", serverVersion: "0.0.43" },
                 permission: input.request.permission,
                 project: { created: true, id: "project-1", title: "Feature" },
                 promptDigest: input.request.promptDigest,
@@ -1172,7 +1172,15 @@ describe("create defaults integration", () => {
             },
             loadConfigWithFallback: async () =>
               createLoadedConfig({ defaults: { create: { launch: "sesh", switch: true } } }),
-            preflightT3Bridge: async () => "0.1.0",
+            preflightT3Native: async () => ({
+              baseDir: "/t3",
+              cli: "t3",
+              origin: "http://127.0.0.1:3773",
+              environmentId: "environment-1",
+              serverVersion: "0.0.43",
+              settings: {},
+              config: {},
+            }),
           }),
         ),
       ).toBe(0);
@@ -1232,7 +1240,15 @@ describe("create defaults integration", () => {
           branchName,
           { json: true, t3: "task", moveChanges: true },
           baseDeps({
-            preflightT3Bridge: async () => "0.1.0",
+            preflightT3Native: async () => ({
+              baseDir: "/t3",
+              cli: "t3",
+              origin: "http://127.0.0.1:3773",
+              environmentId: "environment-1",
+              serverVersion: "0.0.43",
+              settings: {},
+              config: {},
+            }),
             dispatchT3Handoff: dispatch,
             resolvePostCreateDirtyGuidance: async () => ({
               guidance: null,
@@ -1297,7 +1313,7 @@ describe("create defaults integration", () => {
             },
             dispatchT3Handoff: async (input) => {
               const result: T3HandoffResult = {
-                bridgeVersion: input.bridgeVersion,
+                bridgeVersion: input.environment.serverVersion,
                 dispatch: { status: "failed" },
                 environment: { id: null, serverVersion: null },
                 error: { code: "T3_AUTH_FAILED", message: "not paired" },
@@ -1318,7 +1334,15 @@ describe("create defaults integration", () => {
                 result,
               );
             },
-            preflightT3Bridge: async () => "0.1.0",
+            preflightT3Native: async () => ({
+              baseDir: "/t3",
+              cli: "t3",
+              origin: "http://127.0.0.1:3773",
+              environmentId: "environment-1",
+              serverVersion: "0.0.43",
+              settings: {},
+              config: {},
+            }),
           }),
         ),
       ).toBe(1);
@@ -1354,7 +1378,7 @@ describe("create defaults integration", () => {
         branchName,
         {},
         baseDeps({
-          preflightT3Bridge: async () => {
+          preflightT3Native: async () => {
             preflightCalls += 1;
             throw new Error("ordinary create must not require t3code");
           },
@@ -1390,7 +1414,7 @@ describe("create defaults integration", () => {
             dispatchT3Handoff: async (input) => {
               expect(input.dryRun).toBe(true);
               return {
-                bridgeVersion: input.bridgeVersion,
+                bridgeVersion: input.environment.serverVersion,
                 dispatch: { status: "planned" },
                 environment: { id: null, serverVersion: null },
                 permission: input.request.permission,
@@ -1404,9 +1428,18 @@ describe("create defaults integration", () => {
                 workspacePath: input.workspacePath,
               };
             },
-            preflightT3Bridge: async () => {
+            preflightT3Native: async (_cwd, _dependencies, _settings, dryRun) => {
+              expect(dryRun).toBe(true);
               preflightCalls += 1;
-              return "0.1.0";
+              return {
+                baseDir: "/t3",
+                cli: "t3",
+                origin: "http://127.0.0.1:3773",
+                environmentId: "environment-1",
+                serverVersion: "0.0.43",
+                settings: {},
+                config: {},
+              };
             },
           }),
         ),
@@ -1451,7 +1484,15 @@ describe("create defaults integration", () => {
             created = true;
             return createSummary();
           },
-          preflightT3Bridge: async () => "0.1.0",
+          preflightT3Native: async () => ({
+            baseDir: "/t3",
+            cli: "t3",
+            origin: "http://127.0.0.1:3773",
+            environmentId: "environment-1",
+            serverVersion: "0.0.43",
+            settings: {},
+            config: {},
+          }),
         }),
       ),
     ).rejects.toMatchObject({ code: "T3_PARENT_WORKSPACE_REQUIRED" });

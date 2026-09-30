@@ -1,3 +1,4 @@
+import { validateT3Settings, type T3Settings } from "./t3-settings.ts";
 import { runtime } from "./runtime.ts";
 /**
  * Configuration Management Module
@@ -206,6 +207,7 @@ export interface EditorDefaultsConfig {
 }
 
 export interface CommandDefaultsConfig {
+  t3?: T3Settings;
   create?: CreateCommandDefaults;
   editors?: EditorDefaultsConfig;
   switch?: SwitchCommandDefaults;
@@ -558,7 +560,7 @@ const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout", "scripts"]);
 const META_ALLOWED_KEYS = new Set(["baseBranch"]);
 const WORKTREE_NAMING_ALLOWED_KEYS = new Set(["style", "branchSlashes", "maxPathLength"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
-const COMMAND_DEFAULTS_ALLOWED_KEYS = new Set(["create", "editors", "switch"]);
+const COMMAND_DEFAULTS_ALLOWED_KEYS = new Set(["create", "editors", "switch", "t3"]);
 const EDITOR_DEFAULTS_ALLOWED_KEYS = new Set(["vscode", "cursor", "kiro"]);
 const EDITOR_COMMAND_DEFAULTS_ALLOWED_KEYS = new Set(["create"]);
 const SWITCH_DEFAULTS_ALLOWED_KEYS = new Set(["mode", "launchMode", "launch_mode"]);
@@ -1291,6 +1293,13 @@ const normalizeCommandDefaults = (
   const switchDefaults = normalizeSwitchCommandDefaults(value.switch, errors, diagnostics);
 
   const normalized: CommandDefaultsConfig = {};
+  if (value.t3 !== undefined) {
+    try {
+      normalized.t3 = validateT3Settings(value.t3, "defaults.t3");
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "defaults.t3: invalid settings");
+    }
+  }
 
   if (createDefaults) {
     normalized.create = createDefaults;

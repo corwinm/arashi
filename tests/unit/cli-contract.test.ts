@@ -991,8 +991,9 @@ describe("CLI command contract", () => {
     const options = contract.commands.flatMap((command) => command.options);
 
     expect(contract.commands).toHaveLength(31);
-    expect(options).toHaveLength(168);
-    expect(new Set(options.map((option) => option.long))).toHaveLength(70);
+    expect(options).toHaveLength(173);
+    expect(new Set(options.map((option) => option.long))).toHaveLength(75);
+
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(
       contract.commands

@@ -49,6 +49,9 @@ const inspectableEntries = (effective: EffectivePersonalConfig): Record<string, 
     values[`defaults.editors.${host}.create.launch`] =
       config.defaults?.editors?.[host]?.create?.launch ?? "none";
   }
+  for (const field of ["baseDir", "cli", "provider", "model", "effort"] as const) {
+    values[`defaults.t3.${field}`] = config.defaults?.t3?.[field] ?? null;
+  }
   return Object.fromEntries(
     Object.entries(values).map(([field, value]) => [
       field,

@@ -1,13 +1,14 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { nativeConfig, nativeEnvironment } from "../helpers/t3-native.ts";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   dispatchT3Handoff,
-  preflightT3Bridge,
+  t3ReceiptPath,
   resolveT3HandoffRequest,
   T3HandoffError,
-  type T3ProcessResult,
+  type T3HandoffDependencies,
 } from "../../src/lib/t3-handoff.ts";
 
 const temporaryRoots: string[] = [];
@@ -25,28 +26,6 @@ const fixture = async () => {
   await Promise.all([mkdir(workspacePath), mkdir(common)]);
   return { common, root, workspacePath: await realpath(workspacePath) };
 };
-
-const successEnvelope = (workspacePath: string) =>
-  JSON.stringify({
-    ok: true,
-    data: {
-      runtime: { environmentId: "environment-1", serverVersion: "0.0.42", token: "SECRET" },
-      workspace: { workspaceRoot: workspacePath },
-      project: {
-        id: "project-1",
-        title: "Feature",
-        workspaceRoot: workspacePath,
-        secret: "SECRET",
-      },
-      projectCreated: true,
-      thread: {
-        id: "11111111-1111-1111-1111-111111111111",
-        title: "Implement feature",
-        command: { message: { text: "TOP SECRET PROMPT" } },
-      },
-      opened: { mode: "none", kind: "none", url: "http://secret", exactThread: false },
-    },
-  });
 
 describe("T3 handoff input", () => {
   test("accepts inline and multiline file prompts with a full-access default", async () => {
@@ -104,563 +83,481 @@ describe("T3 handoff input", () => {
   });
 });
 
-describe("T3 bridge compatibility", () => {
-  test("accepts the published package embedded 0.1.0 version quirk", async () => {
-    await expect(
-      preflightT3Bridge(".", {
-        runProcess: async () => ({ exitCode: 0, stderr: "", stdout: "0.1.0\n" }),
-      }),
-    ).resolves.toBe("0.1.0");
-  });
-
-  test("rejects missing and incompatible bridges with pinned guidance", async () => {
-    await expect(
-      preflightT3Bridge(".", {
-        runProcess: async () => ({ exitCode: -1, stderr: "missing", stdout: "" }),
-      }),
-    ).rejects.toMatchObject({ code: "T3_BRIDGE_NOT_FOUND" });
-    await expect(
-      preflightT3Bridge(".", {
-        runProcess: async () => ({ exitCode: 0, stderr: "", stdout: "0.2.0" }),
-      }),
-    ).rejects.toMatchObject({ code: "T3_BRIDGE_VERSION_UNSUPPORTED" });
-  });
-});
-
-describe("T3 dispatch and receipts", () => {
-  test("reports retained prompts when preparation and cleanup both fail", async () => {
-    const { common, workspacePath } = await fixture();
-    let spawned = false;
-    await expect(
-      dispatchT3Handoff({
-        branch: "feature/setup-cleanup",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: (await resolveT3HandoffRequest({ t3: "private task" }))!,
-        workspacePath,
-        dependencies: {
-          platform: "win32",
-          resolveGitCommonDirectory: async () => common,
-          setWindowsOwnerOnly: async (path) => {
-            if (path.endsWith("task.md")) throw new Error("staging failed");
-          },
-          removePromptDirectory: async (path) => {
-            temporaryRoots.push(path);
-            throw new Error("cleanup failed");
-          },
-          runProcess: async () => {
-            spawned = true;
-            return { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
-          },
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: "T3_PREPARATION_FAILED",
-      cause: { message: "staging failed" },
-      details: { promptCleanupFailed: true, promptDirectory: expect.any(String) },
-    });
-    expect(spawned).toBe(false);
-  });
-
-  test.each([true, false])(
-    "reports lock cleanup failure without losing the outcome (success=%s)",
-    async (succeeded) => {
-      const { common, workspacePath } = await fixture();
-      const input = {
-        branch: "feature/lock-cleanup",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: (await resolveT3HandoffRequest({ t3: "lock cleanup" }))!,
-        workspacePath,
-        dependencies: {
-          resolveGitCommonDirectory: async () => common,
-          removeReceiptLock: async () => {
-            throw new Error("lock busy");
-          },
-          runProcess: async () => ({
-            exitCode: succeeded ? 0 : 1,
-            stdout: succeeded ? successEnvelope(workspacePath) : "",
-            stderr: JSON.stringify({
-              ok: false,
-              error: { code: "T3_AUTH_FAILED", message: "not paired" },
-            }),
-          }),
-        },
-      };
-      await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-        code: succeeded ? "T3_LOCK_CLEANUP_FAILED" : "T3_AUTH_FAILED",
-        details: { lockCleanupFailed: true, lockPath: expect.any(String) },
-        result: { status: succeeded ? "succeeded" : "failed", retry: { safe: false } },
-      });
-      await expect(dispatchT3Handoff(input)).rejects.toMatchObject({ code: "T3_HANDOFF_LOCKED" });
+async function handoffFixture(serverVersion = "0.0.43") {
+  const { common, workspacePath } = await fixture();
+  const projects: Record<string, unknown>[] = [];
+  const threads: Record<string, unknown>[] = [];
+  const commands: Record<string, unknown>[] = [];
+  const messages: Record<string, unknown>[] = [];
+  let failAt = "";
+  let failAfterAcceptance = false;
+  let failAfterCreation = false;
+  const dependencies: T3HandoffDependencies = {
+    getConfig: async () => nativeConfig(),
+    resolveGitCommonDirectory: async () => common,
+    runProcess: async (command) => ({
+      exitCode: 0,
+      stderr: "SECRET",
+      stdout: command.includes("--version")
+        ? `t3 v${serverVersion}`
+        : command.includes("issue")
+          ? JSON.stringify({ sessionId: "session-1", token: "SECRET" })
+          : "revoked",
+    }),
+    fetch: (async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("environment"))
+        return Response.json({
+          environmentId: "environment-1",
+          serverVersion,
+          orchestrationProtocolVersion: 1,
+        });
+      if (path.endsWith("snapshot")) return Response.json({ projects, threads });
+      if (path.startsWith("/api/orchestration/threads/"))
+        return Response.json({ thread: { messages } });
+      const command = JSON.parse(String(init?.body));
+      commands.push(command);
+      const receipt = JSON.parse(
+        await readFile(await t3ReceiptPath(workspacePath, dependencies), "utf8"),
+      );
+      expect(receipt.native).toBeDefined();
+      if (command.type === "thread.turn.start") expect(receipt.native.phase).toBe("submitting");
+      if (command.type === failAt) {
+        failAt = "";
+        throw new Error("SECRET response");
+      }
+      if (command.type === "project.create")
+        projects.push({
+          id: command.projectId,
+          workspaceRoot: command.workspaceRoot,
+          deletedAt: null,
+          defaultModelSelection: null,
+        });
+      if (command.type === "thread.create")
+        threads.push({
+          id: command.threadId,
+          projectId: command.projectId,
+          worktreePath: null,
+          deletedAt: null,
+        });
+      if (command.type === "thread.create" && failAfterCreation) {
+        failAfterCreation = false;
+        throw new Error("accepted thread followed by timeout SECRET");
+      }
+      if (command.type === "thread.turn.start") {
+        messages.push({ id: command.message.messageId, role: "user" });
+        if (failAfterAcceptance) {
+          failAfterAcceptance = false;
+          throw new Error("Timeout after accepted task SECRET");
+        }
+      }
+      return Response.json({ sequence: commands.length });
+    }) as typeof fetch,
+  };
+  const input = {
+    branch: "feature/test",
+    environment: { ...nativeEnvironment(), serverVersion },
+    dryRun: false,
+    request: (await resolveT3HandoffRequest({ t3: "TOP SECRET PROMPT" }))!,
+    workspacePath,
+    dependencies,
+  };
+  return {
+    input,
+    commands,
+    projects,
+    threads,
+    messages,
+    fail: (type: string) => {
+      failAt = type;
     },
-  );
-  test("requires a directory sync after the dispatching receipt rename before spawning", async () => {
-    const { common, workspacePath } = await fixture();
-    let spawned = false;
-    const synced: string[] = [];
-    await expect(
-      dispatchT3Handoff({
-        branch: "feature/durable",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: (await resolveT3HandoffRequest({ t3: "durable task" }))!,
-        workspacePath,
-        dependencies: {
-          platform: "linux",
-          resolveGitCommonDirectory: async () => common,
-          syncDirectory: async (path) => {
-            synced.push(path);
-            if (path.endsWith(".arashi-t3-handoffs")) throw new Error("directory sync failed");
-          },
-          runProcess: async () => {
-            spawned = true;
-            return { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
-          },
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: "T3_PREPARATION_FAILED",
-      cause: { message: "directory sync failed" },
-    });
-    expect(synced).toContain(common);
-    expect(synced.at(-1)).toBe(join(common, ".arashi-t3-handoffs"));
-    expect(spawned).toBe(false);
-  });
-  test.each([true, false])(
-    "preserves the bridge outcome after cleanup fails (success=%s)",
-    async (succeeded) => {
-      const { common, workspacePath } = await fixture();
-      const input = {
-        branch: "feature/cleanup",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: (await resolveT3HandoffRequest({ t3: "cleanup task" }))!,
-        workspacePath,
-        dependencies: {
-          resolveGitCommonDirectory: async () => common,
-          removePromptDirectory: async (path: string) => {
-            temporaryRoots.push(path);
-            throw new Error("locked");
-          },
-          runProcess: async () => ({
-            exitCode: succeeded ? 0 : 1,
-            stdout: succeeded ? successEnvelope(workspacePath) : "",
-            stderr: JSON.stringify({
-              ok: false,
-              error: { code: "T3_AUTH_FAILED", message: "not paired" },
-            }),
-          }),
-        },
-      };
-      await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-        code: succeeded ? "T3_PROMPT_CLEANUP_FAILED" : "T3_AUTH_FAILED",
-        details: { promptCleanupFailed: true, promptDirectory: expect.any(String) },
-        result: {
-          status: succeeded ? "succeeded" : "failed",
-          dispatch: { status: succeeded ? "succeeded" : "failed" },
-        },
-      });
+    timeoutAfterCreation: () => {
+      failAfterCreation = true;
     },
-  );
+    timeoutAfterAcceptance: () => {
+      failAfterAcceptance = true;
+    },
+  };
+}
 
-  test("preserves a bridge failure when persisting its receipt fails", async () => {
-    const { common, workspacePath } = await fixture();
-    let dispatched = false;
-    await expect(
-      dispatchT3Handoff({
-        branch: "feature/failure-write",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: (await resolveT3HandoffRequest({ t3: "failure write" }))!,
-        workspacePath,
-        dependencies: {
-          platform: "win32",
-          resolveGitCommonDirectory: async () => common,
-          setWindowsOwnerOnly: async () => {
-            if (dispatched) throw new Error("disk full");
-          },
-          runProcess: async () => {
-            dispatched = true;
-            return {
-              exitCode: 1,
-              stdout: "",
-              stderr: JSON.stringify({
-                ok: false,
-                error: { code: "T3_AUTH_FAILED", message: "not paired" },
-              }),
-            };
-          },
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: "T3_AUTH_FAILED",
-      details: { receiptWriteFailed: true },
-      result: { status: "failed", error: { code: "T3_AUTH_FAILED" }, retry: { safe: false } },
+describe("native T3 receipt protection", () => {
+  test("dispatches on a newer stable release with the supported protocol", async () => {
+    const fixture = await handoffFixture("0.0.44");
+    await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({
+      status: "succeeded",
+      environment: { serverVersion: "0.0.44" },
     });
+    expect(fixture.commands.map((command) => command.type)).toEqual([
+      "project.create",
+      "thread.create",
+      "thread.turn.start",
+    ]);
   });
-  test("applies native permissions through a successful dispatch", async () => {
-    const { common, workspacePath } = await fixture();
-    try {
-      const result = await dispatchT3Handoff({
-        branch: "feature/native-acl",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: (await resolveT3HandoffRequest({ t3: "native permissions" }))!,
-        workspacePath,
-        dependencies: {
-          resolveGitCommonDirectory: async () => common,
-          runProcess: async () => ({
-            exitCode: 0,
-            stderr: "",
-            stdout: successEnvelope(workspacePath),
-          }),
-        },
-      });
-      expect(result.status).toBe("succeeded");
-    } catch (error) {
-      throw new Error(`${String(error)}\n${(error as { stderr?: string }).stderr ?? ""}`, {
-        cause: error,
-      });
-    }
-  });
-
-  test("preserves proven remote success when the final receipt write fails", async () => {
-    const { common, workspacePath } = await fixture();
-    let dispatched = false;
-    const input = {
-      branch: "feature/receipt-write",
-      bridgeVersion: "0.1.0",
-      dryRun: false,
-      request: (await resolveT3HandoffRequest({ t3: "receipt write failure" }))!,
-      workspacePath,
-      dependencies: {
-        platform: "win32" as const,
-        resolveGitCommonDirectory: async () => common,
-        setWindowsOwnerOnly: async () => {
-          if (dispatched) throw new Error("storage unavailable");
-        },
-        runProcess: async () => {
-          dispatched = true;
-          return { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
-        },
-      },
+  test("server upgrades after preflight fail before session issuance or remote mutation", async () => {
+    const fixture = await handoffFixture("0.0.44");
+    fixture.input.environment.serverVersion = "0.0.43";
+    const authentication: string[][] = [];
+    const run = fixture.input.dependencies.runProcess!;
+    fixture.input.dependencies.runProcess = async (command, options) => {
+      authentication.push([...command]);
+      return run(command, options);
     };
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-      code: "T3_RECEIPT_WRITE_FAILED",
-      result: {
-        status: "succeeded",
-        project: { id: "project-1" },
-        thread: { id: "11111111-1111-1111-1111-111111111111" },
-        retry: { safe: false },
-      },
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_ENVIRONMENT_CHANGED",
     });
-    input.dependencies.setWindowsOwnerOnly = async () => {};
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-      code: "T3_DUPLICATE_HANDOFF_BLOCKED",
-      result: { status: "dispatching" },
-    });
+    expect(authentication).toEqual([]);
+    expect(fixture.commands).toEqual([]);
   });
-  test.each(["darwin", "linux", "win32"] as const)(
-    "uses exact argv, private paths, and sanitized receipts on %s",
-    async (platform) => {
-      const { common, workspacePath } = await fixture();
-      const calls: readonly string[][] = [];
-      const mutableCalls = calls as string[][];
-      const aclPaths: string[] = [];
-      const request = await resolveT3HandoffRequest({
-        permission: "approval-required",
-        t3: "line one\n$HOME `unsafe` line two",
-      });
-      expect(request).not.toBeNull();
+  test("CLI upgrades after preflight fail before session issuance or remote mutation", async () => {
+    const fixture = await handoffFixture();
+    const authentication: string[][] = [];
+    fixture.input.dependencies.runProcess = async (command) => {
+      authentication.push([...command]);
+      return { exitCode: 0, stderr: "", stdout: "t3 v0.0.44" };
+    };
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_VERSION_MISMATCH",
+    });
+    expect(authentication).toEqual([["t3", "--version"]]);
+    expect(fixture.commands).toEqual([]);
+  });
 
-      const result = await dispatchT3Handoff({
-        branch: "feature/t3",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: request!,
-        workspacePath,
-        dependencies: {
-          platform,
-          syncDirectory: async () => {},
-          resolveGitCommonDirectory: async () => common,
-          setWindowsOwnerOnly: async (path) => {
-            aclPaths.push(path);
-          },
-          runProcess: async (command): Promise<T3ProcessResult> => {
-            mutableCalls.push([...command]);
-            return { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
-          },
-        },
-      });
+  test("reuses a project whose directory alias identifies the exact checkout", async () => {
+    const fixture = await handoffFixture();
+    const alias = `${fixture.input.workspacePath}-alias`;
+    await symlink(fixture.input.workspacePath, alias, "junction");
+    fixture.projects.push({ id: "existing-project", workspaceRoot: alias, deletedAt: null });
+    const result = await dispatchT3Handoff(fixture.input);
+    expect(result.project).toMatchObject({ id: "existing-project", created: false });
+    expect(fixture.commands.map((command) => command.type)).toEqual([
+      "thread.create",
+      "thread.turn.start",
+    ]);
+  });
 
-      expect(calls).toHaveLength(1);
-      expect(calls[0]).toEqual([
-        "t3code",
-        "--json",
-        "handover",
-        "--cwd",
-        result.workspacePath,
-        "--workspace-mode",
-        "folder",
-        "--project-policy",
-        "create",
-        "--checkout",
-        "current",
-        "--open",
-        "none",
-        "--permission",
-        "approval-required",
-        "--prompt-file",
-        expect.stringContaining("task.md"),
+  test("alias-equivalent projects remain ambiguous instead of creating another project", async () => {
+    const fixture = await handoffFixture();
+    const alias = `${fixture.input.workspacePath}-alias`;
+    await symlink(fixture.input.workspacePath, alias, "junction");
+    fixture.projects.push(
+      { id: "project-1", workspaceRoot: fixture.input.workspacePath, deletedAt: null },
+      { id: "project-2", workspaceRoot: alias, deletedAt: null },
+    );
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_PROJECT_AMBIGUOUS",
+    });
+    expect(fixture.commands).toHaveLength(0);
+  });
+
+  test.skipIf(process.platform !== "win32")(
+    "Windows casing and separators reuse the same project",
+    async () => {
+      const fixture = await handoffFixture();
+      const alternate = fixture.input.workspacePath.toUpperCase().replaceAll("\\", "/");
+      fixture.projects.push({ id: "existing-project", workspaceRoot: alternate, deletedAt: null });
+      await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({
+        project: { id: "existing-project", created: false },
+      });
+      expect(fixture.commands.map((command) => command.type)).toEqual([
+        "thread.create",
+        "thread.turn.start",
       ]);
-      expect(result).toMatchObject({
-        status: "succeeded",
-        permission: "approval-required",
-        environment: { id: "environment-1", serverVersion: "0.0.42" },
-        project: { id: "project-1", created: true },
-        thread: { id: "11111111-1111-1111-1111-111111111111", title: null },
-        ui: { mode: "none", status: "skipped" },
-      });
-      const receiptText = await readFile(result.receiptPath!, "utf8");
-      expect(receiptText).not.toContain("TOP SECRET PROMPT");
-      expect(receiptText).not.toContain("Implement feature");
-      expect(receiptText).not.toContain("line one");
-      expect(receiptText).not.toContain("SECRET");
-      if (process.platform !== "win32") {
-        expect((await stat(result.receiptPath!)).mode & 0o077).toBe(0);
-      }
-      if (platform === "win32") {
-        expect(aclPaths.some((path) => path.endsWith("task.md"))).toBe(true);
-        expect(aclPaths.some((path) => path.endsWith(".arashi-t3-handoffs"))).toBe(true);
-      } else {
-        expect(aclPaths).toEqual([]);
-      }
     },
   );
 
-  test("allows a matching retry after definite failure, then blocks a duplicate success", async () => {
-    const { common, workspacePath } = await fixture();
-    const request = (await resolveT3HandoffRequest({ t3: "retry task" }))!;
-    let response: T3ProcessResult = {
-      exitCode: 1,
-      stdout: "",
-      stderr: JSON.stringify({
-        ok: false,
-        error: { code: "T3_AUTH_FAILED", message: "not paired" },
-      }),
-    };
-    const dependencies = {
-      resolveGitCommonDirectory: async () => common,
-      runProcess: async () => response,
-    };
-    const input = {
-      branch: "feature/retry",
-      bridgeVersion: "0.1.0",
-      dryRun: false,
-      request,
-      workspacePath,
-      dependencies,
-    };
-
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-      code: "T3_AUTH_FAILED",
-      result: { status: "failed", retry: { safe: true } },
+  test("uses exact project selection before server defaults for effort-only overrides", async () => {
+    const fixture = await handoffFixture();
+    const config = nativeConfig();
+    config.providers.push({ ...config.providers[0]!, instanceId: "project-provider" });
+    fixture.input.dependencies.getConfig = async () => config;
+    fixture.input.environment.settings = { effort: "high" };
+    fixture.projects.push({
+      id: "existing-project",
+      workspaceRoot: fixture.input.workspacePath,
+      deletedAt: null,
+      defaultModelSelection: {
+        instanceId: "project-provider",
+        model: "catalog-default",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
     });
-    response = { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
-    await expect(dispatchT3Handoff(input)).resolves.toMatchObject({ status: "succeeded" });
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-      code: "T3_DUPLICATE_HANDOFF_BLOCKED",
-      result: { status: "succeeded" },
+    const result = await dispatchT3Handoff(fixture.input);
+    expect(result.selection).toEqual({
+      instanceId: "project-provider",
+      model: "catalog-default",
+      options: [{ id: "reasoningEffort", value: "high" }],
     });
+    expect(fixture.commands.map((command) => command.type)).toEqual([
+      "thread.create",
+      "thread.turn.start",
+    ]);
   });
 
-  test("treats an unavailable server as indeterminate and blocks blind retry", async () => {
-    const { common, workspacePath } = await fixture();
-    const request = (await resolveT3HandoffRequest({ t3: "server task" }))!;
-    const input = {
-      branch: "feature/server",
-      bridgeVersion: "0.1.0",
-      dryRun: false,
-      request,
-      workspacePath,
-      dependencies: {
-        resolveGitCommonDirectory: async () => common,
-        runProcess: async () => ({
-          exitCode: 1,
-          stdout: "",
-          stderr: JSON.stringify({
-            ok: false,
-            error: { code: "T3_REQUEST_FAILED", message: "server unavailable" },
-          }),
-        }),
-      },
-    };
+  test.each(["approval-required", "auto-accept-edits", "full-access"] as const)(
+    "dispatches %s to the exact checkout and protects the receipt",
+    async (permission) => {
+      const fixture = await handoffFixture();
+      fixture.input.request.permission = permission;
+      const result = await dispatchT3Handoff(fixture.input);
+      expect(result.status).toBe("succeeded");
+      expect(result.selection).toEqual({
+        instanceId: "codex",
+        model: "catalog-default",
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      });
+      expect(fixture.commands.map((command) => command.type)).toEqual([
+        "project.create",
+        "thread.create",
+        "thread.turn.start",
+      ]);
+      expect(fixture.commands[0]!.workspaceRoot).toBe(fixture.input.workspacePath);
+      expect(fixture.commands[1]).toMatchObject({ worktreePath: null, runtimeMode: permission });
+      expect(fixture.commands[2]).toMatchObject({
+        runtimeMode: permission,
+        message: { text: "TOP SECRET PROMPT" },
+      });
+      const persisted = await readFile(result.receiptPath!, "utf8");
+      expect(persisted).not.toContain("SECRET");
+      expect(JSON.stringify(result)).not.toContain("SECRET");
+      if (process.platform !== "win32") {
+        expect((await stat(result.receiptPath!)).mode & 0o777).toBe(0o600);
+        expect((await stat(join(result.receiptPath!, ".."))).mode & 0o777).toBe(0o700);
+      }
+      await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+        code: "T3_DUPLICATE_HANDOFF_BLOCKED",
+      });
+      expect(fixture.commands).toHaveLength(3);
+    },
+  );
 
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-      code: "T3_REQUEST_FAILED",
+  test.each(["project.create", "thread.create"])(
+    "reconciles partial %s failure using saved identifiers",
+    async (type) => {
+      const fixture = await handoffFixture();
+      fixture.fail(type);
+      await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+        result: { status: "failed", retry: { safe: true } },
+      });
+      await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({
+        status: "succeeded",
+      });
+      expect(fixture.projects).toHaveLength(1);
+      expect(fixture.threads).toHaveLength(1);
+      expect(
+        fixture.commands.filter((command) => command.type === "thread.turn.start"),
+      ).toHaveLength(1);
+    },
+  );
+
+  test("thread creation accepted before timeout is reconciled without creating another thread", async () => {
+    const fixture = await handoffFixture();
+    fixture.timeoutAfterCreation();
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      result: { status: "failed" },
+    });
+    await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({ status: "succeeded" });
+    expect(fixture.commands.filter((command) => command.type === "thread.create")).toHaveLength(1);
+    expect(fixture.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
+      1,
+    );
+  });
+
+  test("concurrent invocation never starts a second dispatch", async () => {
+    const fixture = await handoffFixture();
+    const results = await Promise.allSettled([
+      dispatchT3Handoff(fixture.input),
+      dispatchT3Handoff(fixture.input),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const failure = results.find((result) => result.status === "rejected");
+    expect((failure as PromiseRejectedResult).reason.code).toMatch(
+      /T3_HANDOFF_LOCKED|T3_DUPLICATE_HANDOFF_BLOCKED/u,
+    );
+    expect(fixture.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
+      1,
+    );
+  });
+
+  test("accepted task followed by timeout is confirmed on restart without a second submission", async () => {
+    const fixture = await handoffFixture();
+    fixture.timeoutAfterAcceptance();
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       result: { status: "indeterminate", retry: { safe: false } },
     });
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-      code: "T3_DUPLICATE_HANDOFF_BLOCKED",
+    await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({ status: "succeeded" });
+    expect(fixture.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
+      1,
+    );
+  });
+
+  test("uncertain unaccepted task never resubmits, even if the thread is deleted", async () => {
+    const fixture = await handoffFixture();
+    fixture.fail("thread.turn.start");
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       result: { status: "indeterminate" },
+    });
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_DISPATCH_UNCERTAIN",
+    });
+    fixture.threads.splice(0);
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_DISPATCH_UNCERTAIN",
+    });
+    expect(fixture.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
+      1,
+    );
+  });
+
+  test.each(["succeeded", "dispatching", "indeterminate", "failed"])(
+    "bridge-era %s receipts block native redispatch",
+    async (status) => {
+      const fixture = await handoffFixture();
+      const success = await dispatchT3Handoff(fixture.input);
+      const receipt = JSON.parse(await readFile(success.receiptPath!, "utf8"));
+      receipt.token = "SECRET";
+      receipt.retry.guidance = "SECRET bridge output";
+      receipt.error = { code: "LEGACY", message: "SECRET bridge error" };
+      receipt.version = 1;
+      receipt.bridgeVersion = "0.1.0";
+      receipt.status = status;
+      receipt.dispatch.status = status;
+      delete receipt.native;
+      delete receipt.adapter;
+      delete receipt.selection;
+      await writeFile(success.receiptPath!, JSON.stringify(receipt));
+      await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+        code: "T3_DUPLICATE_HANDOFF_BLOCKED",
+      });
+      expect(fixture.commands).toHaveLength(3);
+    },
+  );
+
+  test("blocks changed prompt, permissions, and explicit model selection", async () => {
+    const fixture = await handoffFixture();
+    fixture.fail("thread.create");
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toBeInstanceOf(T3HandoffError);
+    fixture.input.environment.settings = { model: "other" };
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_HANDOFF_INTENT_CHANGED",
+    });
+    fixture.input.environment.settings = {};
+    fixture.input.request.permission = "approval-required";
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_HANDOFF_INTENT_CHANGED",
     });
   });
 
-  test("blocks changed intent after failure and concurrent dispatch for one workspace", async () => {
-    const { common, workspacePath } = await fixture();
-    const firstRequest = (await resolveT3HandoffRequest({ t3: "first task" }))!;
-    const failedDependencies = {
-      resolveGitCommonDirectory: async () => common,
-      runProcess: async () => ({
-        exitCode: 1,
-        stdout: "",
-        stderr: JSON.stringify({
-          ok: false,
-          error: { code: "T3_AUTH_FAILED", message: "not paired" },
-        }),
-      }),
-    };
-    await expect(
-      dispatchT3Handoff({
-        branch: "feature/intent",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: firstRequest,
-        workspacePath,
-        dependencies: failedDependencies,
-      }),
-    ).rejects.toMatchObject({ code: "T3_AUTH_FAILED" });
-    const changedRequest = (await resolveT3HandoffRequest({ t3: "changed task" }))!;
-    await expect(
-      dispatchT3Handoff({
-        branch: "feature/intent",
-        bridgeVersion: "0.1.0",
-        dryRun: false,
-        request: changedRequest,
-        workspacePath,
-        dependencies: failedDependencies,
-      }),
-    ).rejects.toMatchObject({ code: "T3_HANDOFF_INTENT_CHANGED" });
-
-    const secondFixture = await fixture();
-    let allowResponse!: () => void;
-    let processStarted!: () => void;
-    const started = new Promise<void>((resolve) => (processStarted = resolve));
-    const responseAllowed = new Promise<void>((resolve) => (allowResponse = resolve));
-    const concurrentRequest = (await resolveT3HandoffRequest({ t3: "concurrent task" }))!;
-    const concurrentInput = {
-      branch: "feature/concurrent",
-      bridgeVersion: "0.1.0",
-      dryRun: false,
-      request: concurrentRequest,
-      workspacePath: secondFixture.workspacePath,
-      dependencies: {
-        resolveGitCommonDirectory: async () => secondFixture.common,
-        runProcess: async () => {
-          processStarted();
-          await responseAllowed;
-          return {
-            exitCode: 0,
-            stderr: "",
-            stdout: successEnvelope(secondFixture.workspacePath),
-          };
-        },
-      },
-    };
-    const firstDispatch = dispatchT3Handoff(concurrentInput);
-    await started;
-    await expect(dispatchT3Handoff(concurrentInput)).rejects.toMatchObject({
+  test("fails closed on corrupt receipts and stale/concurrent locks", async () => {
+    const fixture = await handoffFixture();
+    const path = await t3ReceiptPath(fixture.input.workspacePath, fixture.input.dependencies);
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, "{}");
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_RECEIPT_INVALID",
+    });
+    await rm(path);
+    await writeFile(`${path}.lock`, "");
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       code: "T3_HANDOFF_LOCKED",
     });
-    allowResponse();
-    await expect(firstDispatch).resolves.toMatchObject({ status: "succeeded" });
+    expect(fixture.commands).toHaveLength(0);
   });
 
-  test("records malformed post-spawn output as indeterminate and blocks blind retry", async () => {
-    const { common, workspacePath } = await fixture();
-    const request = (await resolveT3HandoffRequest({ t3: "uncertain task" }))!;
-    const input = {
-      branch: "feature/uncertain",
-      bridgeVersion: "0.1.0",
-      dryRun: false,
-      request,
-      workspacePath,
-      dependencies: {
-        resolveGitCommonDirectory: async () => common,
-        runProcess: async () => ({ exitCode: 0, stderr: "", stdout: "not-json" }),
-      },
-    };
-
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
-      code: "T3_BRIDGE_RESPONSE_INVALID",
-      result: { status: "indeterminate", retry: { safe: false } },
+  test("auth cleanup failure preserves accepted task and receipt protection", async () => {
+    const fixture = await handoffFixture();
+    fixture.input.dependencies.runProcess = async (command) => ({
+      exitCode: command.includes("revoke") ? -1 : 0,
+      stderr: "SECRET",
+      stdout: command.includes("--version")
+        ? "t3 v0.0.43"
+        : JSON.stringify({ sessionId: "session-1", token: "SECRET" }),
     });
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_AUTH_CLEANUP_FAILED",
+      details: { sessionCleanupFailed: true },
+      result: { status: "succeeded", retry: { safe: false } },
+    });
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       code: "T3_DUPLICATE_HANDOFF_BLOCKED",
-      result: { status: "indeterminate" },
     });
+    expect(fixture.commands).toHaveLength(3);
   });
 
-  test("fails closed on a corrupted receipt instead of dispatching", async () => {
-    const { common, workspacePath } = await fixture();
-    const request = (await resolveT3HandoffRequest({ t3: "receipt task" }))!;
-    let receiptPath = "";
-    const input = {
-      branch: "feature/receipt",
-      bridgeVersion: "0.1.0",
-      dryRun: false,
-      request,
-      workspacePath,
-      dependencies: {
-        resolveGitCommonDirectory: async () => common,
-        runProcess: async () => ({
-          exitCode: 1,
-          stdout: "",
-          stderr: JSON.stringify({
-            ok: false,
-            error: { code: "T3_AUTH_FAILED", message: "not paired" },
-          }),
-        }),
-      },
+  test("fresh catalog rejection stops remote preparation when preflight has become stale", async () => {
+    const fixture = await handoffFixture();
+    fixture.input.dependencies.getConfig = async () => ({ providers: [], settings: {} });
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_PROVIDER_AMBIGUOUS",
+      result: { status: "failed" },
+    });
+    expect(fixture.commands).toHaveLength(0);
+  });
+
+  test("a retained lock preserves successful remote outcome", async () => {
+    const fixture = await handoffFixture();
+    fixture.input.dependencies.removeReceiptLock = async () => {
+      throw new Error("cleanup failure");
     };
-    try {
-      await dispatchT3Handoff(input);
-    } catch (error) {
-      expect(error).toBeInstanceOf(T3HandoffError);
-      receiptPath = (error as T3HandoffError).result?.receiptPath ?? "";
-    }
-    expect(receiptPath).not.toBe("");
-    await writeFile(receiptPath, "{}\n");
-    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({ code: "T3_RECEIPT_INVALID" });
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_LOCK_CLEANUP_FAILED",
+      details: { lockCleanupFailed: true },
+      result: { status: "succeeded", retry: { safe: false } },
+    });
   });
 
-  test("dry-run plans without subprocess or receipt mutation", async () => {
-    const { workspacePath } = await fixture();
-    const request = (await resolveT3HandoffRequest({ t3: "plan only" }))!;
-    const result = await dispatchT3Handoff({
-      branch: "feature/plan",
-      bridgeVersion: "0.1.0",
-      dryRun: true,
-      request,
-      workspacePath: join(workspacePath, "not-created-yet"),
-      dependencies: {
-        runProcess: async () => {
-          throw new Error("must not run");
-        },
-      },
+  test("receipt persistence failure after acceptance cannot lead to duplicate dispatch", async () => {
+    const fixture = await handoffFixture();
+    let syncs = 0;
+    const failAfterAcceptance = async () => {
+      syncs++;
+      if (fixture.messages.length > 0) throw new Error("disk failure");
+    };
+    // Windows deliberately skips directory fsync; exercise its receipt ACL step.
+    fixture.input.dependencies.syncDirectory = failAfterAcceptance;
+    fixture.input.dependencies.setWindowsOwnerOnly = failAfterAcceptance;
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_RECEIPT_WRITE_FAILED",
+      result: { status: "succeeded", retry: { safe: false } },
     });
-    expect(result).toMatchObject({
+    expect(syncs).toBeGreaterThan(0);
+    delete fixture.input.dependencies.syncDirectory;
+    delete fixture.input.dependencies.setWindowsOwnerOnly;
+    await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({ status: "succeeded" });
+    expect(fixture.commands).toHaveLength(3);
+  });
+
+  test("receipt security or sync failure before dispatch prevents every remote mutation", async () => {
+    const fixture = await handoffFixture();
+    const durabilityError = new Error("no durability");
+    const failReceipt = async () => {
+      throw durabilityError;
+    };
+    fixture.input.dependencies.syncDirectory = failReceipt;
+    fixture.input.dependencies.setWindowsOwnerOnly = failReceipt;
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toThrow();
+    expect(fixture.commands).toHaveLength(0);
+  });
+
+  test("Windows uses owner-only ACLs for receipt directory, lock, and receipt", async () => {
+    const fixture = await handoffFixture();
+    const paths: string[] = [];
+    fixture.input.dependencies.platform = "win32";
+    fixture.input.dependencies.setWindowsOwnerOnly = async (path) => {
+      paths.push(path);
+    };
+    await dispatchT3Handoff(fixture.input);
+    expect(paths.some((path) => path.endsWith(".lock"))).toBe(true);
+    expect(paths.some((path) => path.endsWith(".tmp"))).toBe(true);
+    expect(paths.some((path) => path.endsWith(".arashi-t3-handoffs"))).toBe(true);
+  });
+
+  test("dry-run does not issue credentials, dispatch, or write receipts", async () => {
+    const fixture = await handoffFixture();
+    fixture.input.dryRun = true;
+    await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({
       status: "planned",
       receiptPath: null,
-      dispatch: { status: "planned" },
     });
-  });
-});
-
-test("T3HandoffError exposes stable structured fields", () => {
-  expect(new T3HandoffError("CODE", "message", { safe: true })).toMatchObject({
-    code: "CODE",
-    details: { safe: true },
+    expect(fixture.commands).toHaveLength(0);
   });
 });
