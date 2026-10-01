@@ -88,6 +88,32 @@ test.each(["revoke", "release"])("A26 known acceptance survives $0 failure", asy
 });
 test.each([
   [
+    "object dispatch",
+    (r: any) => {
+      r.status = "failed";
+      r.native.phase = "preparing";
+      r.dispatch.status = { secret: "CANARY" };
+    },
+  ],
+  [
+    "object server version",
+    (r: any) => {
+      r.environment.serverVersion = { secret: "CANARY" };
+    },
+  ],
+  [
+    "object created time",
+    (r: any) => {
+      r.createdAt = { secret: "CANARY" };
+    },
+  ],
+  [
+    "object updated time",
+    (r: any) => {
+      r.updatedAt = { secret: "CANARY" };
+    },
+  ],
+  [
     "object option",
     (r: any) => {
       r.selection.options = [{ id: "reasoning", value: { secret: "CANARY" } }];

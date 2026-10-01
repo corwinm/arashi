@@ -305,6 +305,10 @@ async function switchReceipts(
       !value!.project ||
       !value!.thread ||
       !value!.dispatch ||
+      !["dispatching", "succeeded", "failed", "indeterminate"].includes(value!.dispatch.status) ||
+      typeof value!.environment.serverVersion !== "string" ||
+      typeof value!.createdAt !== "string" ||
+      typeof value!.updatedAt !== "string" ||
       !value!.pinnedSettings ||
       !value!.requestedSettings ||
       !value!.provenance ||
