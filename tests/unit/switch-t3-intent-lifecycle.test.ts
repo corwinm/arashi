@@ -3,6 +3,17 @@ import { dirname } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { dispatchT3Handoff, t3ReceiptPath } from "../../src/lib/t3-handoff.ts";
 import { switchFixture } from "../helpers/switch-t3-intent.ts";
+type CorruptReceipt = {
+  createdAt: unknown;
+  updatedAt: unknown;
+  status: unknown;
+  dispatch: { status: unknown };
+  environment: { serverVersion: unknown };
+  native: { phase: unknown };
+  preparation: { project: unknown; thread: unknown };
+  project: { created: unknown };
+  selection?: { options: unknown[] };
+};
 const roots: string[] = [];
 afterEach(async () =>
   Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
@@ -89,7 +100,7 @@ test.each(["revoke", "release"])("A26 known acceptance survives $0 failure", asy
 test.each([
   [
     "object dispatch",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       r.status = "failed";
       r.native.phase = "preparing";
       r.dispatch.status = { secret: "CANARY" };
@@ -97,49 +108,49 @@ test.each([
   ],
   [
     "object server version",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       r.environment.serverVersion = { secret: "CANARY" };
     },
   ],
   [
     "object created time",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       r.createdAt = { secret: "CANARY" };
     },
   ],
   [
     "object updated time",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       r.updatedAt = { secret: "CANARY" };
     },
   ],
   [
     "object option",
-    (r: any) => {
-      r.selection.options = [{ id: "reasoning", value: { secret: "CANARY" } }];
+    (r: CorruptReceipt) => {
+      r.selection!.options = [{ id: "reasoning", value: { secret: "CANARY" } }];
     },
   ],
   [
     "object project created",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       r.project.created = { secret: "CANARY" };
     },
   ],
   [
     "accepted requesting project",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       r.preparation.project = "requesting";
     },
   ],
   [
     "accepted unattempted thread",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       r.preparation.thread = "not-attempted";
     },
   ],
   [
     "accepted missing selection",
-    (r: any) => {
+    (r: CorruptReceipt) => {
       delete r.selection;
     },
   ],
