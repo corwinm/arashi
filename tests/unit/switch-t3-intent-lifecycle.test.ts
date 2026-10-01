@@ -99,6 +99,26 @@ test.each(["revoke", "release"])("A26 known acceptance survives $0 failure", asy
 });
 test.each([
   [
+    "array native phase",
+    (r: CorruptReceipt) => {
+      r.status = "failed";
+      r.dispatch.status = "failed";
+      r.native.phase = ["accepted"];
+    },
+  ],
+  [
+    "array preparation project",
+    (r: CorruptReceipt) => {
+      r.preparation.project = ["confirmed"];
+    },
+  ],
+  [
+    "array preparation thread",
+    (r: CorruptReceipt) => {
+      r.preparation.thread = ["confirmed"];
+    },
+  ],
+  [
     "object dispatch",
     (r: CorruptReceipt) => {
       r.status = "failed";

@@ -175,7 +175,9 @@ const nativeFields = (value: unknown) => {
   return (
     ["environmentId", "projectId", "threadId", "messageId"].every((field) =>
       Boolean(identifier(v[field])),
-    ) && ["preparing", "submitting", "accepted"].includes(String(v.phase))
+    ) &&
+    typeof v.phase === "string" &&
+    ["preparing", "submitting", "accepted"].includes(v.phase)
   );
 };
 function projectReceipt(receipt: SwitchReceipt): SwitchReceipt {
@@ -296,10 +298,13 @@ async function switchReceipts(
       value!.workspacePath !== workspace ||
       !sameIdentity(record(value!.selectedGitIdentity) as unknown as SwitchGitIdentity, identity) ||
       !nativeFields(native) ||
-      !["not-attempted", "requesting", "confirmed"].includes(String(preparation.project)) ||
-      !["not-attempted", "requesting", "confirmed"].includes(String(preparation.thread)) ||
+      typeof preparation.project !== "string" ||
+      !["not-attempted", "requesting", "confirmed"].includes(preparation.project) ||
+      typeof preparation.thread !== "string" ||
+      !["not-attempted", "requesting", "confirmed"].includes(preparation.thread) ||
       !["dispatching", "succeeded", "failed", "indeterminate"].includes(value!.status) ||
       !["approval-required", "auto-accept-edits", "full-access"].includes(value!.permission) ||
+      typeof value!.promptDigest !== "string" ||
       !/^[a-f0-9]{64}$/u.test(value!.promptDigest) ||
       !value!.environment ||
       !value!.project ||
