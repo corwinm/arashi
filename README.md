@@ -97,6 +97,14 @@ You can then use `aw switch --cd <filter>` to change the current shell's directo
 Remove only the exact managed shell block with `aw shell uninstall --dry-run`, then
 `aw shell uninstall --yes`. This leaves executables, PATH, manifests, and project data untouched.
 
+Existing-checkout native T3 handoff: `aw switch --path /path/to/checkout --t3 "Task"`.
+Use `--prompt-file` for UTF-8 input and `--permission` for an explicit permission mode.
+It opens no UI; select the reported project/thread in your connected client. Same-intent
+retries reconcile saved IDs. After resolution, a deliberate `--t3-intent followup-1`
+starts another thread; never use a fresh intent to bypass uncertainty. Maintainers should
+preserve repository-local receipts and retained locks during recovery. Conversation state
+is not transferred.
+
 ## Uninstallation
 
 Inspect the conservative removal plan first, then consent explicitly:

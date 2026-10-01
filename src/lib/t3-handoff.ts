@@ -7,6 +7,12 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { exec } from "./git.ts";
 import {
+  dispatchSwitchT3Handoff,
+  checkSwitchT3SiblingsForCreate,
+  type SwitchT3Descriptor,
+} from "./switch-t3-handoff.ts";
+import {
+  nativeChildEnvironment,
   identifier,
   record,
   records,
@@ -25,7 +31,10 @@ export { preflightT3Native } from "./t3-native.ts";
 
 // Compare existing directory identities rather than folding case: Windows can
 // also host case-sensitive directories, while POSIX hosts can be insensitive.
-const projectUsesWorkspace = async (root: unknown, workspacePath: string): Promise<boolean> => {
+export const projectUsesWorkspace = async (
+  root: unknown,
+  workspacePath: string,
+): Promise<boolean> => {
   if (typeof root !== "string" || !isAbsolute(root)) return false;
   try {
     const physical = await realpath(root);
@@ -101,8 +110,8 @@ export interface T3HandoffResult {
   error?: { code: string; message: string };
 }
 
-interface T3HandoffReceipt extends T3HandoffResult {
-  version: 1 | 2;
+export interface T3HandoffReceipt extends T3HandoffResult {
+  version: 1 | 2 | 3;
   branch: string;
   createdAt: string;
   updatedAt: string;
@@ -119,6 +128,8 @@ export interface T3HandoffDependencies extends T3NativeDependencies {
   setWindowsOwnerOnly?: (path: string) => Promise<void>;
   syncDirectory?: (path: string) => Promise<void>;
   removeReceiptLock?: (path: string) => Promise<void>;
+  /** Internal finite fault-injection seam; no CLI or remote API surface. */
+  receiptProbe?: (stage: string, boundary: number, path: string) => Promise<void>;
 }
 
 const readUtf8Strict = async (path: string): Promise<string> => {
@@ -265,11 +276,11 @@ const setWindowsOwnerOnly = async (path: string): Promise<void> => {
       "-EncodedCommand",
       Buffer.from(windowsAclSet, "utf16le").toString("base64"),
     ],
-    { env: { ...process.env, ARASHI_T3_RECEIPT_PATH: path } },
+    { env: nativeChildEnvironment({ ARASHI_T3_RECEIPT_PATH: path }) },
   );
 };
 
-const secureReceiptDirectory = async (
+export const secureReceiptDirectory = async (
   directory: string,
   dependencies: T3HandoffDependencies,
 ): Promise<void> => {
@@ -298,7 +309,7 @@ const syncDirectory = async (path: string): Promise<void> => {
   }
 };
 
-const acquireReceiptLock = async (
+export const acquireReceiptLock = async (
   receiptPath: string,
   dependencies: T3HandoffDependencies,
 ): Promise<() => Promise<void>> => {
@@ -352,18 +363,29 @@ const acquireReceiptLock = async (
   };
 };
 
-const persistReceipt = async (
+export const persistReceipt = async (
   path: string,
   receipt: T3HandoffReceipt,
   dependencies: T3HandoffDependencies,
+  stage?: string,
 ): Promise<void> => {
+  const probe = async (boundary: number) => {
+    if (stage) {
+      await dependencies.receiptProbe?.(stage, boundary, path);
+    }
+  };
   const directory = dirname(path);
   await secureReceiptDirectory(directory, dependencies);
   const temporary = join(directory, `.${randomUUID()}.tmp`);
+  await probe(1);
   const handle = await open(temporary, "wx", 0o600);
   try {
+    await probe(2);
     await handle.writeFile(`${JSON.stringify(receipt, null, 2)}\n`, "utf8");
-    if ((dependencies.platform ?? process.platform) !== "win32") await handle.chmod(0o600);
+    await probe(3);
+    if ((dependencies.platform ?? process.platform) !== "win32") {
+      await handle.chmod(0o600);
+    }
     await handle.sync();
   } finally {
     await handle.close();
@@ -372,12 +394,17 @@ const persistReceipt = async (
     if ((dependencies.platform ?? process.platform) === "win32") {
       await (dependencies.setWindowsOwnerOnly ?? setWindowsOwnerOnly)(temporary);
     }
+    await probe(4);
     await rename(temporary, path);
+    await probe(5);
     if ((dependencies.platform ?? process.platform) !== "win32") {
       await (dependencies.syncDirectory ?? syncDirectory)(directory);
     }
+    await probe(6);
   } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
+    if (!stage) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
     throw error;
   }
 };
@@ -444,7 +471,7 @@ const isT3HandoffReceipt = (value: unknown): value is T3HandoffReceipt => {
   );
 };
 
-const readReceipt = async (path: string): Promise<T3HandoffReceipt | null> => {
+export const readReceipt = async (path: string): Promise<T3HandoffReceipt | null> => {
   try {
     const metadata = await lstat(path);
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
@@ -559,7 +586,10 @@ export const dispatchT3Handoff = async (input: {
   request: T3HandoffRequest;
   workspacePath: string;
   dependencies?: T3HandoffDependencies;
+  switch?: SwitchT3Descriptor;
 }): Promise<T3HandoffResult> => {
+  if (input.switch)
+    return dispatchSwitchT3Handoff(input as typeof input & { switch: SwitchT3Descriptor });
   const dependencies = input.dependencies ?? {};
   const workspacePath = input.dryRun
     ? await realpath(input.workspacePath).catch(() => resolve(input.workspacePath))
@@ -582,6 +612,7 @@ export const dispatchT3Handoff = async (input: {
   const receiptPath = await t3ReceiptPath(workspacePath, dependencies);
   const releaseReceiptLock = await acquireReceiptLock(receiptPath, dependencies);
   const execute = async (): Promise<T3HandoffResult> => {
+    await checkSwitchT3SiblingsForCreate(workspacePath, dependencies);
     const existing = await readReceipt(receiptPath);
     if (existing && existing.workspacePath !== workspacePath) {
       throw new T3HandoffError(

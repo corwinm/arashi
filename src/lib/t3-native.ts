@@ -47,6 +47,13 @@ export interface T3NativeDependencies {
 const fail = (code: string, message: string): never => {
   throw new T3HandoffError(code, message);
 };
+/** Native children must never inherit the shell directory-switch directive. */
+export const nativeChildEnvironment = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
+  const environment = { ...process.env, ...extra };
+  delete environment.ARASHI_DIRECTIVE_FILE;
+  return environment;
+};
+
 const runProcess: NonNullable<T3NativeDependencies["runProcess"]> = (command, options) =>
   new Promise((done) => {
     execFile(
@@ -267,7 +274,7 @@ export async function withT3Session<T>(
   use: (request: ReturnType<typeof t3Http>, token: string) => Promise<T>,
 ): Promise<T> {
   const run = dependencies.runProcess ?? runProcess;
-  const options = { cwd, env: { ...process.env, T3CODE_HOME: environment.baseDir } };
+  const options = { cwd, env: nativeChildEnvironment({ T3CODE_HOME: environment.baseDir }) };
   const issued = await run(
     [
       environment.cli,
@@ -450,7 +457,7 @@ export async function readT3CliVersion(
 ): Promise<string> {
   const version = await (dependencies.runProcess ?? runProcess)([cli, "--version"], {
     cwd,
-    env: process.env,
+    env: nativeChildEnvironment(),
   });
   if (version.exitCode !== 0)
     return fail(
