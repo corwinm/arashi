@@ -70,7 +70,7 @@ describe("npm JavaScript entrypoint", () => {
       });
 
       expect(exitCode).toBe(0);
-      expect(output.join("\n")).toContain("Usage: arashi uninstall [options]");
+      expect(output.join("\n")).toContain("Usage: aw uninstall [options]");
       expect(output.join("\n")).toContain("-n, --dry-run");
       expect(output.join("\n")).toContain("-y, --yes");
       expect(output.join("\n")).toContain("-h, --help");

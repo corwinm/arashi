@@ -902,7 +902,7 @@ export const formatAsTable = (output: ListCommandOutput, verbose: boolean): stri
     lines.push(`The main repository is at: ${chalk.cyan(output.repositoryPath)}`);
     lines.push("");
     lines.push("To create a worktree, run:");
-    lines.push("  arashi create <branch-name>");
+    lines.push("  aw create <branch-name>");
     return lines.join("\n");
   }
 

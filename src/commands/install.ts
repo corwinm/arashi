@@ -11,7 +11,7 @@ export function createCommand(): Command {
     .action((options: { json?: boolean }) => {
       const message = "No npm-managed binary installation is needed in this direct binary context.";
       const npmEntrypointMessage =
-        "The npm package entrypoint handles `arashi install` before the native binary starts.";
+        "The npm package entrypoint handles `aw install` before the native binary starts.";
       const reinstallMessage =
         "For direct binary or curl installs, reinstall Arashi or download a release asset if the binary is missing.";
       const releasesUrl = "https://github.com/corwinm/arashi/releases";

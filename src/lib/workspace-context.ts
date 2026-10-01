@@ -245,7 +245,7 @@ export class ConfiguredWorkspaceRequiredError extends Error {
 
   constructor(commandName: string) {
     super(
-      `arashi ${commandName} requires a configured workspace. Run "arashi init" (without --zero-config) to enable repository coordination.`,
+      `aw ${commandName} requires a configured workspace. Run "aw init" (without --zero-config) to enable repository coordination.`,
     );
     this.details = { command: commandName, mode: "standalone" };
     this.name = "ConfiguredWorkspaceRequiredError";

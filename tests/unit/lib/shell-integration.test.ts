@@ -142,6 +142,6 @@ describe("shell integration", () => {
   test("returns actionable error when install cannot detect a supported shell", async () => {
     await expect(
       installShellIntegration({ env: { HOME: "/tmp", SHELL: "/bin/nu" } }),
-    ).rejects.toThrow("Use `arashi shell init <bash|zsh|fish>` for manual setup");
+    ).rejects.toThrow("Use `aw shell init <bash|zsh|fish>` for manual setup");
   });
 });

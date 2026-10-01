@@ -577,7 +577,7 @@ describe("formatAsTable()", () => {
     const table = formatAsTable(output, false);
 
     expect(table).toContain("No additional worktrees found");
-    expect(table).toContain("arashi create");
+    expect(table).toContain("aw create");
     expect(table).toContain("/repo/main");
   });
 

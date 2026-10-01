@@ -286,7 +286,7 @@ const loadWorkspaceConfig = async (workspaceRoot: string): Promise<Config> => {
 };
 
 const formatPrunableTargetMessage = (target: string): string =>
-  `Target '${target}' is stale/prunable worktree metadata. Run 'arashi prune' to clean it up.`;
+  `Target '${target}' is stale/prunable worktree metadata. Run 'aw prune' to clean it up.`;
 
 const formatDirtyDetailsText = (worktree: WorktreeEntry): string => {
   const details = worktree.dirtyDetails;
@@ -409,7 +409,7 @@ export async function executeRemove(
       if (selectable.length === ZERO) {
         info("No worktrees found to remove");
         if (prunable.length > ZERO) {
-          info("Stale worktree metadata found; run 'arashi prune' to clean it up");
+          info("Stale worktree metadata found; run 'aw prune' to clean it up");
         }
         return ZERO;
       }
@@ -797,7 +797,7 @@ export async function executeRemove(
     if (selectable.length === 0) {
       info("No worktrees found to remove");
       if (prunableEntries.length > ZERO) {
-        info("Stale worktree metadata found; run 'arashi prune' to clean it up");
+        info("Stale worktree metadata found; run 'aw prune' to clean it up");
       }
       return ZERO;
     }
@@ -1781,7 +1781,7 @@ const getWorkspaceRoot = async (): Promise<string> => {
     }
 
     throw new RemoveCommandError(
-      'Arashi configuration not found. Run "arashi init" to create configuration.',
+      'Arashi configuration not found. Run "aw init" to create configuration.',
       RemoveCommandErrorCode.CONFIG_ERROR,
       { error: message },
     );
@@ -1801,7 +1801,7 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
     } else {
       logError(error.message);
       if (error.code === RemoveCommandErrorCode.BRANCH_NOT_FOUND) {
-        info('Hint: Run "arashi list" to see all worktrees');
+        info('Hint: Run "aw list" to see all worktrees');
       }
       if (error.code === RemoveCommandErrorCode.NON_INTERACTIVE) {
         info("Hint: Run this command in an interactive terminal");

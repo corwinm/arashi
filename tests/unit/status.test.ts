@@ -227,9 +227,11 @@ describe("checkRepoStatus", () => {
   test("returns clone guidance when repository path is missing", async () => {
     const status = await checkRepoStatus("missing-repo", "/path/that/does/not/exist");
 
-    expect(status.error).toContain("arashi clone");
+    expect(status.error).toContain("aw clone");
     expect(status.files).toHaveLength(0);
     expect(status.defaultBranch).toBeNull();
+    expect(filterHumanVisibleStatuses([status], {})).toEqual([]);
+    expect(formatShortLine(status)).toContain("missing (run aw clone)");
   });
 
   test("refreshes tracked remote before parsing branch status", async () => {
@@ -905,14 +907,13 @@ describe("formatShortLine", () => {
         localBranch: "",
         remoteBranch: null,
       },
-      error:
-        "Repository is missing at /tmp/repo-a. Run `arashi clone` to clone missing repositories.",
+      error: "Repository is missing at /tmp/repo-a. Run `aw clone` to clone missing repositories.",
       files: [],
       name: "repo-a",
       path: "/tmp/repo-a",
     });
 
-    expect(line).toContain("arashi clone");
+    expect(line).toContain("aw clone");
   });
 
   test("shows a compact behind-default indicator", () => {
@@ -991,7 +992,7 @@ describe("partial worktree status presentation", () => {
     },
     defaultBranch: null,
     error:
-      "Repository is missing at /tmp/missing-repo. Run `arashi clone` to clone missing repositories.",
+      "Repository is missing at /tmp/missing-repo. Run `aw clone` to clone missing repositories.",
     files: [],
     name: "missing-repo",
     path: "/tmp/missing-repo",

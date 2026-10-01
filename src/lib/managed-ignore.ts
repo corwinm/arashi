@@ -460,7 +460,7 @@ export const inspectManagedIgnore = async (
   const validScopes = new Set<ManagedIgnoreScope>(["local", "tracked", "none"]);
   if (storedValue !== null && !validScopes.has(storedValue as ManagedIgnoreScope)) {
     throw new Error(
-      `Invalid clone-local arashi.ignoreScope value '${storedValue}'. Run \`git config --local --unset arashi.ignoreScope\` or \`arashi init --ignore-scope local\`.`,
+      `Invalid clone-local arashi.ignoreScope value '${storedValue}'. Run \`git config --local --unset arashi.ignoreScope\` or \`aw init --ignore-scope local\`.`,
     );
   }
   if (requestedScope !== undefined && !validScopes.has(requestedScope as ManagedIgnoreScope)) {
@@ -852,7 +852,7 @@ export const inspectBareManagedIgnore = async (
   }
   if (storedValue !== null && !validScopes.has(storedValue as ManagedIgnoreScope)) {
     throw new Error(
-      `Invalid clone-local arashi.ignoreScope value '${storedValue}'. Run \`git config --local --unset arashi.ignoreScope\` or \`arashi init --ignore-scope local\`.`,
+      `Invalid clone-local arashi.ignoreScope value '${storedValue}'. Run \`git config --local --unset arashi.ignoreScope\` or \`aw init --ignore-scope local\`.`,
     );
   }
   if (

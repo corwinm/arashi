@@ -27,7 +27,7 @@ export class StandaloneDestinationNotIgnoredError extends Error {
   };
   constructor(destination: string, ignoreRule = ".worktrees/") {
     super(
-      `Standalone worktree destination is not ignored: ${destination}. Run "arashi init --zero-config" or add ${ignoreRule} to the repository-local exclude file.`,
+      `Standalone worktree destination is not ignored: ${destination}. Run "aw init --zero-config" or add ${ignoreRule} to the repository-local exclude file.`,
     );
     this.destination = destination;
     this.details = {
@@ -35,7 +35,7 @@ export class StandaloneDestinationNotIgnoredError extends Error {
       effectiveIgnore: { ignored: false, pattern: null, source: null },
       mode: "standalone",
       mutation: { branch: false, config: false, ignore: false, worktree: false },
-      repairCommands: ["arashi init --zero-config"],
+      repairCommands: ["aw init --zero-config"],
     };
     this.name = "StandaloneDestinationNotIgnoredError";
   }

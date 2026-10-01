@@ -279,7 +279,7 @@ describe("loadConfig", () => {
       expect(error).toBeInstanceOf(ConfigNotFoundError);
       const err = error as ConfigNotFoundError;
       expect(err.message).toContain("not found");
-      expect(err.message).toContain("arashi init");
+      expect(err.message).toContain("aw init");
       expect(normalizePathSeparators(String(err.context.path))).toContain(".arashi/config.json");
     }
   });

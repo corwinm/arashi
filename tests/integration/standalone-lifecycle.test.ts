@@ -81,7 +81,7 @@ describe("standalone lifecycle", () => {
       details: {
         effectiveIgnore: { ignored: false, source: null },
         mutation: { branch: false, config: false, ignore: false, worktree: false },
-        repairCommands: ["arashi init --zero-config"],
+        repairCommands: ["aw init --zero-config"],
       },
     });
     expect(JSON.parse(result.stdout).error.details.destination).toBe(
@@ -679,7 +679,7 @@ describe("standalone lifecycle", () => {
     const result = await arashi(root, ["remove", "--force"]);
 
     expect(result.exitCode).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain("arashi prune");
+    expect(`${result.stdout}${result.stderr}`).toContain("aw prune");
     expect((await run(root, ["git", "branch", "--list", "stale-only-remove"])).stdout).toContain(
       "stale-only-remove",
     );
@@ -1422,7 +1422,7 @@ describe("standalone lifecycle", () => {
     expect(result.exitCode).not.toBe(0);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.error).toMatchObject({ code: "CONFIGURED_WORKSPACE_REQUIRED" });
-    expect(envelope.error.message).toContain("arashi init");
+    expect(envelope.error.message).toContain("aw init");
     await expect(access(join(root, ".arashi"))).rejects.toThrow();
   });
 

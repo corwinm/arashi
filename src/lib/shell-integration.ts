@@ -128,14 +128,14 @@ export async function installShellIntegration(
 
   if (!shell) {
     throw new Error(
-      "Unable to detect a supported shell for `arashi shell install`. Use `arashi shell init <bash|zsh|fish>` for manual setup. Then run `arashi completion <bash|zsh|fish>` to activate completion.",
+      "Unable to detect a supported shell for `aw shell install`. Use `aw shell init <bash|zsh|fish>` for manual setup. Then run `aw completion <bash|zsh|fish>` to activate completion.",
     );
   }
 
   const startupFilePath = await resolveStartupFilePath(shell, env);
   if (!startupFilePath) {
     throw new Error(
-      `Unable to determine a writable startup file for ${shell}. Use \`arashi shell init ${shell}\` and \`arashi completion ${shell}\` for manual setup.`,
+      `Unable to determine a writable startup file for ${shell}. Use \`aw shell init ${shell}\` and \`aw completion ${shell}\` for manual setup.`,
     );
   }
 
@@ -163,7 +163,7 @@ export async function installShellIntegration(
       await runtime.write(startupFilePath, nextContents);
     } catch {
       throw new Error(
-        `Unable to write ${startupFilePath}. Use \`arashi shell init ${shell}\` and \`arashi completion ${shell}\` for manual setup.`,
+        `Unable to write ${startupFilePath}. Use \`aw shell init ${shell}\` and \`aw completion ${shell}\` for manual setup.`,
       );
     }
   }
@@ -206,7 +206,7 @@ export async function planShellUninstall(
 ): Promise<ShellUninstallPlan> {
   const env = options.env ?? process.env;
   const shell = options.shell ?? detectSupportedShell(env);
-  if (!shell) throw new Error("Unable to detect a supported shell for `arashi shell uninstall`.");
+  if (!shell) throw new Error("Unable to detect a supported shell for `aw shell uninstall`.");
   const startupFilePath = await resolveStartupFilePath(shell, env, options.homedir ?? homedir);
   if (!startupFilePath) throw new Error(`Unable to determine a startup file for ${shell}.`);
   return planShellUninstallPath(startupFilePath);
@@ -221,9 +221,9 @@ export async function planDetectedShellUninstalls(
 ): Promise<ShellUninstallPlan[]> {
   const env = options.env ?? process.env;
   const shell = options.shell ?? detectSupportedShell(env);
-  if (!shell) throw new Error("Unable to detect a supported shell for `arashi shell uninstall`.");
+  if (!shell) throw new Error("Unable to detect a supported shell for `aw shell uninstall`.");
   const home = env.HOME?.trim() || (options.homedir ?? homedir)().trim();
-  if (!home) throw new Error("Unable to determine a home directory for `arashi shell uninstall`.");
+  if (!home) throw new Error("Unable to determine a home directory for `aw shell uninstall`.");
 
   const plans: ShellUninstallPlan[] = [];
   for (const startupFilePath of new Set(getStartupFileCandidates(home, shell))) {

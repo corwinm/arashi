@@ -214,14 +214,14 @@ export function createCommand(): Command {
       "after",
       `
 Examples:
-  $ arashi switch
-  $ arashi switch --repos
-  $ arashi switch --ignore-configured-launcher
-  $ arashi switch --all feature-auth
-  $ arashi switch --cursor feature-auth
-  $ arashi switch --path /path/to/worktree
-  $ arashi switch feature-auth
-  $ arashi switch repo-a --sesh
+  $ aw switch
+  $ aw switch --repos
+  $ aw switch --ignore-configured-launcher
+  $ aw switch --all feature-auth
+  $ aw switch --cursor feature-auth
+  $ aw switch --path /path/to/worktree
+  $ aw switch feature-auth
+  $ aw switch repo-a --sesh
 
 Configured modes: auto | cd | launch | sesh | herdr
 Precedence: explicit launcher flags, --cd/--launch, configured mode, then automatic context detection.
@@ -364,7 +364,7 @@ export async function executeSwitch(
     }
 
     throw new SwitchCommandError(
-      `No worktrees matched filter \`${filter}\`. Run \`arashi switch\` to choose interactively or provide a broader filter.`,
+      `No worktrees matched filter \`${filter}\`. Run \`aw switch\` to choose interactively or provide a broader filter.`,
       SwitchCommandErrorCode.NO_MATCHES,
       {
         filter,
@@ -412,10 +412,10 @@ export async function executeSwitch(
 
   if (resolvedBehavior.warnOnMissingIntegration && !directiveContext) {
     warn(
-      "Shell integration is not active, so `arashi switch` cannot change the current shell directory for this invocation.",
+      "Shell integration is not active, so `aw switch` cannot change the current shell directory for this invocation.",
     );
     info(
-      "Hint: run `arashi shell install`, restart your shell, and invoke `arashi` through the installed wrapper.",
+      "Hint: run `aw shell install`, restart your shell, and invoke `aw` through the installed wrapper.",
     );
 
     if (resolvedBehavior.skipLaunchWhenUnavailable) {
@@ -458,17 +458,17 @@ const handleSwitchError = (error: unknown): never => {
     logError(error.message);
 
     if (error.code === SwitchCommandErrorCode.AMBIGUOUS_NON_INTERACTIVE) {
-      info("Hint: provide a more specific filter, e.g. `arashi switch feature-auth`.");
+      info("Hint: provide a more specific filter, e.g. `aw switch feature-auth`.");
       process.exit(USAGE_EXIT_CODE);
     }
 
     if (error.code === SwitchCommandErrorCode.NO_TARGETS) {
-      info("Hint: create a worktree first with `arashi create <branch>`.");
+      info("Hint: create a worktree first with `aw create <branch>`.");
       process.exit(USAGE_EXIT_CODE);
     }
 
     if (error.code === SwitchCommandErrorCode.NO_MATCHES) {
-      info("Hint: run `arashi list` to see available worktree paths and branches.");
+      info("Hint: run `aw list` to see available worktree paths and branches.");
       process.exit(USAGE_EXIT_CODE);
     }
 
@@ -536,11 +536,11 @@ const filterRepositoriesByScope = (
 
 const getNoTargetsMessage = (scope: SwitchRepositoryScope): string => {
   if (scope === "repos") {
-    return "No switch targets were found for child repositories in the current workspace. Try `arashi switch --all` to include all worktrees.";
+    return "No switch targets were found for child repositories in the current workspace. Try `aw switch --all` to include all worktrees.";
   }
 
   if (scope === "parent") {
-    return "No switch targets were found in the parent repository. Use `arashi switch --repos` or `arashi switch --all` to broaden the search.";
+    return "No switch targets were found in the parent repository. Use `aw switch --repos` or `aw switch --all` to broaden the search.";
   }
 
   return "No switch targets were found in this workspace.";
@@ -706,10 +706,10 @@ const buildRepoNoMatchMessage = (
 
 const buildPathNoMatchMessage = (filter: string | undefined): string => {
   if (!filter || filter.trim().length === ZERO) {
-    return "Exact path mode requires a worktree path. Run `arashi switch --path <worktree-path>`.";
+    return "Exact path mode requires a worktree path. Run `aw switch --path <worktree-path>`.";
   }
 
-  return `No worktree exists at exact path \`${resolve(filter.trim())}\`. Run \`arashi list\` to see available worktree paths.`;
+  return `No worktree exists at exact path \`${resolve(filter.trim())}\`. Run \`aw list\` to see available worktree paths.`;
 };
 
 const validateSwitchOptions = (options: SwitchCommandOptions): void => {

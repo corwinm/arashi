@@ -180,7 +180,7 @@ export async function launchSwitchTarget(
       }));
     if (!seshAvailable) {
       throw new SwitchCommandError(
-        "The `sesh` binary is required for --sesh mode. Install sesh or run `arashi switch` without --sesh.",
+        "The `sesh` binary is required for --sesh mode. Install sesh or run `aw switch` without --sesh.",
         SwitchCommandErrorCode.SESH_NOT_FOUND,
       );
     }
@@ -317,7 +317,7 @@ export function resolveLaunchPlan(
     if (launcher === "terminal") {
       supported = false;
       reason =
-        "Terminal.app cannot safely create a true tab through its supported automation. Press Command-T, then run `arashi switch --cd` in the new tab (requires active Arashi shell integration). To force normal automatic launch resolution, run `arashi switch --launch --ignore-configured-launcher`; when automatic launcher resolution selects Terminal.app, it opens a new window.";
+        "Terminal.app cannot safely create a true tab through its supported automation. Press Command-T, then run `aw switch --cd` in the new tab (requires active Arashi shell integration). To force normal automatic launch resolution, run `aw switch --launch --ignore-configured-launcher`; when automatic launcher resolution selects Terminal.app, it opens a new window.";
     } else if (
       launcher === "ide" ||
       launcher === "git-bash" ||
@@ -401,7 +401,7 @@ export async function preflightLaunchSwitchTarget(
     });
     if (!seshAvailable) {
       throw new SwitchCommandError(
-        "The `sesh` binary is required for --sesh mode. Install sesh or run `arashi switch` without --sesh.",
+        "The `sesh` binary is required for --sesh mode. Install sesh or run `aw switch` without --sesh.",
         SwitchCommandErrorCode.SESH_NOT_FOUND,
       );
     }

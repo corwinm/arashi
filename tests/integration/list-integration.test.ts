@@ -207,7 +207,7 @@ describe("list command - basic functionality", () => {
     expect(error).toBeUndefined();
     expect(output).toContain("Worktrees");
     expect(output).toContain("No additional worktrees found");
-    expect(output).toContain("arashi create");
+    expect(output).toContain("aw create");
   });
 
   test("lists all worktrees in table format", async () => {

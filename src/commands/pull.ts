@@ -139,7 +139,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         throw error;
       }
       throw new CliUsageError(
-        'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+        'Not in an arashi workspace. Run "aw init" to initialize a workspace',
       );
     },
   );
@@ -205,7 +205,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         if (!(await fileExists(repo.path))) {
           return {
             elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
-            errorMessage: `Repository is not materialized; run \`arashi clone\` to create ${repo.name}.`,
+            errorMessage: `Repository is not materialized; run \`aw clone\` to create ${repo.name}.`,
             repositoryId: repo.name,
             status: "skipped",
           };
@@ -287,7 +287,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     } else if (repo.path !== workspaceRoot && !(await fileExists(repo.path))) {
       const result: PullResult = {
         elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
-        errorMessage: `Repository is not materialized; run \`arashi clone\` to create ${repo.name}.`,
+        errorMessage: `Repository is not materialized; run \`aw clone\` to create ${repo.name}.`,
         repositoryId: repo.name,
         status: "skipped",
       };

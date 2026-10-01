@@ -69,11 +69,11 @@ export function createCommand(): Command {
       "after",
       `
 Examples:
-  $ arashi list                    # Simple list of paths (pipe-friendly)
-  $ arashi list --table            # Table format with headers
-  $ arashi list --json             # Output as JSON
-  $ arashi list --verbose          # Show sub-repositories
-  $ arashi list | fzf              # Interactive selection with fzf
+  $ aw list                    # Simple list of paths (pipe-friendly)
+  $ aw list --table            # Table format with headers
+  $ aw list --json             # Output as JSON
+  $ aw list --verbose          # Show sub-repositories
+  $ aw list | fzf              # Interactive selection with fzf
 `,
     )
     .action(async (options: CliOptions, command: Command) => {
@@ -135,7 +135,7 @@ Examples:
           process.exit(1);
         } else if (error instanceof ConfigurationMissingError) {
           logError("Arashi configuration not found");
-          logError('Run "arashi init" to create configuration.');
+          logError('Run "aw init" to create configuration.');
           process.exit(1);
         } else if (error instanceof ListCommandError) {
           logError(`List command error: ${error.message}`);

@@ -1533,9 +1533,9 @@ const displaySuccess = (result: InitResult, options: InitOptions): void => {
 
   console.log("\nNext steps:");
   if (result.discoveredCount && result.discoveredCount > 0) {
-    console.log("  • Create a worktree: arashi create <branch-name>");
+    console.log("  • Create a worktree: aw create <branch-name>");
   } else {
-    console.log("  • Add repositories: arashi add <path>");
+    console.log("  • Add repositories: aw add <path>");
   }
   console.log("  • View configuration: cat .arashi/config.json");
   if (process.platform === "win32") {
@@ -1574,7 +1574,7 @@ const displayError = (result: InitResult): void => {
     }
 
     case ExitCode.CONFIG_EXISTS: {
-      console.log("\nTo reinitialize, use: arashi init --force");
+      console.log("\nTo reinitialize, use: aw init --force");
       console.log("This will backup your existing configuration.");
       break;
     }
@@ -1635,11 +1635,11 @@ export function createCommand(): Command {
       "after",
       `
 Examples:
-  $ arashi init --zero-config           # Standalone .worktrees/ convention only
-  $ arashi init                         # Local info/exclude rules (default)
-  $ arashi init --ignore-scope tracked  # Team-owned .gitignore block
-  $ arashi init --ignore-scope none     # Manual ignore management
-  $ arashi init --ignore-scope local    # Reset an existing clone to the default
+  $ aw init --zero-config           # Standalone .worktrees/ convention only
+  $ aw init                         # Local info/exclude rules (default)
+  $ aw init --ignore-scope tracked  # Team-owned .gitignore block
+  $ aw init --ignore-scope none     # Manual ignore management
+  $ aw init --ignore-scope local    # Reset an existing clone to the default
 
 Existing effective tracked, local, or global rules are honored. Arashi never modifies global Git configuration.
       `,
@@ -1715,8 +1715,8 @@ Existing effective tracked, local, or global rules are honored. Arashi never mod
           success("Initialized standalone zero-config workspace");
           console.log(`  • Worktrees: ${zeroConfigResult.worktreesDirectory.path}`);
           console.log(`  • Local exclude: ${zeroConfigResult.localExclude.path}`);
-          console.log("  • Create a worktree: arashi create <branch-name>");
-          console.log("  • Upgrade for coordination: arashi init");
+          console.log("  • Create a worktree: aw create <branch-name>");
+          console.log("  • Upgrade for coordination: aw init");
         }
         process.exit(ExitCode.SUCCESS);
       }

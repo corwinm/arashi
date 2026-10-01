@@ -258,7 +258,7 @@ export const managedIgnoreToDoctorFindings = (
           message: `Managed path '${path.rule}' is not effectively ignored (scope: ${inspection.scope}).`,
           scope: `managed-ignore:${path.rule}`,
           severity: "warning",
-          suggestedCommands: ["arashi init --ignore-scope local"],
+          suggestedCommands: ["aw init --ignore-scope local"],
         }),
       );
     } else if (path.status === "unsafe") {
@@ -270,7 +270,7 @@ export const managedIgnoreToDoctorFindings = (
           message: `Configured managed path '${path.input}' is unsafe to ignore automatically (${path.safetyReason}).`,
           scope: `managed-ignore:${path.input}`,
           severity: "warning",
-          suggestedCommands: ["arashi init --help", "edit .arashi/config.json"],
+          suggestedCommands: ["aw init --help", "edit .arashi/config.json"],
         }),
       );
     }
@@ -284,7 +284,7 @@ export const managedIgnoreToDoctorFindings = (
         message: `Arashi-owned ignore rule '${stale.rule}' is stale in ${stale.path}.`,
         scope: `managed-ignore:${stale.target}`,
         severity: "warning",
-        suggestedCommands: ["arashi init --ignore-scope local"],
+        suggestedCommands: ["aw init --ignore-scope local"],
       }),
     );
   }
@@ -349,7 +349,7 @@ const collectManagedIgnoreFindings = async (
           severity: "warning",
           suggestedCommands: [
             "git config --local --unset arashi.ignoreScope",
-            "arashi init --ignore-scope local",
+            "aw init --ignore-scope local",
           ],
         }),
       ];
@@ -403,7 +403,7 @@ export const repositoryStatusToDoctorFindings = (
           message: `Configured repository '${status.name}' is missing at ${status.path}.`,
           scope,
           severity: "error",
-          suggestedCommands: ["arashi clone", `git clone <url> ${status.path}`],
+          suggestedCommands: ["aw clone", `git clone <url> ${status.path}`],
         }),
       );
       return findings;
@@ -432,7 +432,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Repository '${status.name}' has uncommitted changes.`,
         scope,
         severity: "warning",
-        suggestedCommands: ["arashi status --verbose", `git -C ${status.path} status`],
+        suggestedCommands: ["aw status --verbose", `git -C ${status.path} status`],
       }),
     );
   }
@@ -537,7 +537,7 @@ export const repositoryStatusToDoctorFindings = (
         scope,
         severity: "warning",
         suggestedCommands: [
-          "arashi status",
+          "aw status",
           `git -C ${status.path} branch --set-upstream-to <upstream>`,
         ],
       }),
@@ -557,7 +557,7 @@ export const repositoryStatusToDoctorFindings = (
         scope,
         severity: "warning",
         suggestedCommands: [
-          "arashi status",
+          "aw status",
           `git -C ${status.path} pull --rebase`,
           `git -C ${status.path} push`,
         ],
@@ -576,7 +576,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Repository '${status.name}' is ahead of ${status.branch.remoteBranch} by ${status.branch.ahead} commit(s).`,
         scope,
         severity: "warning",
-        suggestedCommands: ["arashi status", `git -C ${status.path} push`],
+        suggestedCommands: ["aw status", `git -C ${status.path} push`],
       }),
     );
   } else if (status.branch.behind > ZERO) {
@@ -592,7 +592,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Repository '${status.name}' is behind ${status.branch.remoteBranch} by ${status.branch.behind} commit(s).`,
         scope,
         severity: "warning",
-        suggestedCommands: ["arashi pull", `git -C ${status.path} pull --ff-only`],
+        suggestedCommands: ["aw pull", `git -C ${status.path} pull --ff-only`],
       }),
     );
   }
@@ -606,7 +606,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Repository '${status.name}' tracks a missing remote ref: ${status.refreshWarning.message}`,
         scope,
         severity: "warning",
-        suggestedCommands: ["arashi status", `git -C ${status.path} branch -vv`],
+        suggestedCommands: ["aw status", `git -C ${status.path} branch -vv`],
       }),
     );
   } else if (status.refreshWarning) {
@@ -618,7 +618,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Repository '${status.name}' remote tracking status may be stale: ${status.refreshWarning.message}`,
         scope,
         severity: "warning",
-        suggestedCommands: ["arashi status", `git -C ${status.path} fetch`],
+        suggestedCommands: ["aw status", `git -C ${status.path} fetch`],
       }),
     );
   }
@@ -649,7 +649,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Repository '${status.name}' is behind configured base ${baseRef} by ${status.baseBranch.behind} commit(s).`,
         scope,
         severity: "warning",
-        suggestedCommands: ["arashi status --verbose", "arashi pull"],
+        suggestedCommands: ["aw status --verbose", "aw pull"],
       }),
     );
   } else if (status.baseBranch?.state === "unavailable") {
@@ -673,7 +673,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Could not compare '${status.name}' with configured base ${baseRef}: ${status.baseBranch.message}`,
         scope,
         severity: "warning",
-        suggestedCommands: ["arashi status --verbose", "arashi pull"],
+        suggestedCommands: ["aw status --verbose", "aw pull"],
       }),
     );
   }
@@ -696,7 +696,7 @@ export const repositoryStatusToDoctorFindings = (
         scope,
         severity: "warning",
         suggestedCommands: [
-          "arashi status",
+          "aw status",
           `git -C ${status.path} merge ${status.defaultBranch.branch}`,
         ],
       }),
@@ -714,7 +714,7 @@ export const repositoryStatusToDoctorFindings = (
         message: `Could not compare '${status.name}' with its default branch.`,
         scope,
         severity: "info",
-        suggestedCommands: ["arashi status", `git -C ${status.path} fetch`],
+        suggestedCommands: ["aw status", `git -C ${status.path} fetch`],
       }),
     );
   }
@@ -777,7 +777,7 @@ const collectWorktreeFindings = async (
         message: `Repository '${repo.name}' has stale worktree metadata for ${worktree.path}.`,
         scope: `repository:${repo.name}`,
         severity: "warning",
-        suggestedCommands: ["arashi prune --dry-run", "arashi prune"],
+        suggestedCommands: ["aw prune --dry-run", "aw prune"],
       }),
     );
   });
@@ -845,7 +845,7 @@ const scanHookDirectoryForUnsupportedFiles = async (
             message: `Unsupported hook definition '${entry.name}' found in ${hookDir}.`,
             scope: `hook:${scope}`,
             severity: "error",
-            suggestedCommands: ["arashi init --help"],
+            suggestedCommands: ["aw init --help"],
           }),
         );
         continue;
@@ -861,7 +861,7 @@ const scanHookDirectoryForUnsupportedFiles = async (
               message: `Configured hook '${entry.name}' could not be resolved at ${hookFile}.`,
               scope: `hook:${scope}:${entry.name}`,
               severity: "warning",
-              suggestedCommands: ["arashi init --help"],
+              suggestedCommands: ["aw init --help"],
             }),
           );
         }
@@ -1212,9 +1212,7 @@ const collectHookFindings = async (
           message: `Hook '${hook.hookName}' for '${hook.targetRepositoryName}' is invalid: ${validation.error ?? "unknown error"}`,
           scope: `hook:${hook.scope}:${hook.targetRepositoryName}:${hook.hookName}`,
           severity: permissionIssue ? "warning" : "error",
-          suggestedCommands: permissionIssue
-            ? [`chmod +x ${hook.scriptPath}`]
-            : ["arashi init --help"],
+          suggestedCommands: permissionIssue ? [`chmod +x ${hook.scriptPath}`] : ["aw init --help"],
         }),
       );
     }
@@ -1282,7 +1280,7 @@ const collectHookFindings = async (
         message: `Hook '${location.hookName}' for '${location.repository}' is invalid: ${validation.error ?? "unknown error"}`,
         scope: `hook:${location.scope}:${location.repository}:${location.hookName}`,
         severity: permissionIssue ? "warning" : "error",
-        suggestedCommands: permissionIssue ? [`chmod +x ${hookPath}`] : ["arashi init --help"],
+        suggestedCommands: permissionIssue ? [`chmod +x ${hookPath}`] : ["aw init --help"],
       }),
     );
   }
@@ -1330,7 +1328,7 @@ export const runDoctor = async (
         message: "No Arashi workspace was found from the current directory.",
         scope: "workspace",
         severity: "error",
-        suggestedCommands: ["arashi init", "cd <arashi-workspace>"],
+        suggestedCommands: ["aw init", "cd <arashi-workspace>"],
       }),
     );
     return {
@@ -1368,7 +1366,7 @@ export const runDoctor = async (
         message: `Failed to load Arashi configuration: ${error instanceof Error ? error.message : String(error)}`,
         scope: "configuration:.arashi/config.json",
         severity: "error",
-        suggestedCommands: ["arashi init", `cat ${getConfigPath(configurationRoot)}`],
+        suggestedCommands: ["aw init", `cat ${getConfigPath(configurationRoot)}`],
       }),
     );
     return {
@@ -1410,7 +1408,7 @@ export const runDoctor = async (
           message: `A doctor diagnostic phase failed: ${phaseResult.reason instanceof Error ? phaseResult.reason.message : String(phaseResult.reason)}`,
           scope: "workspace",
           severity: "error",
-          suggestedCommands: ["arashi status --verbose", "arashi prune --dry-run"],
+          suggestedCommands: ["aw status --verbose", "aw prune --dry-run"],
         }),
       );
     }

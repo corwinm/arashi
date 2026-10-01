@@ -885,13 +885,13 @@ describe("launch disposition matrix", () => {
       message: expect.stringContaining("Command-T"),
     });
     await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
-      "arashi switch --cd",
+      "aw switch --cd",
     );
     await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.not.toThrow(
-      'cd "$(arashi switch --no-cd --no-default-launch)"',
+      'cd "$(aw switch --no-cd --no-default-launch)"',
     );
     await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
-      "arashi switch --launch --ignore-configured-launcher",
+      "aw switch --launch --ignore-configured-launcher",
     );
     expect(commands).toEqual([]);
   });

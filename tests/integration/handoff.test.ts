@@ -214,7 +214,7 @@ describe("handoff command", () => {
     expect(result.stdout).toContain("Windows CI pending");
     expect(result.stdout).toContain("Review pending");
     expect(result.stdout).toContain("`gh pr checks 123 --repo corwinm/arashi`");
-    expect(result.stdout).toContain("`arashi status --verbose`");
+    expect(result.stdout).toContain("`aw status --verbose`");
   });
 
   test("emits one JSON envelope preserving supplied context and status data", async () => {
@@ -284,7 +284,7 @@ describe("handoff command", () => {
 
     expect(markdown.exitCode).toBe(0);
     expect(markdown.stdout).toContain("base/default origin/main behind by 1");
-    expect(markdown.stdout).toContain("`arashi status --verbose`");
+    expect(markdown.stdout).toContain("`aw status --verbose`");
     const repositories = (parseJson(json.stdout).data as Record<string, unknown>)
       .repositories as Record<string, unknown>[];
     expect(repositories.find((repo) => repo.name === "Main Repository")).toMatchObject({
