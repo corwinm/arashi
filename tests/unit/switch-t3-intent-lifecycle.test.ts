@@ -86,6 +86,51 @@ test.each(["revoke", "release"])("A26 known acceptance survives $0 failure", asy
   if (kind === "release")
     expect(await readFile((await t3ReceiptPath(f.input.workspacePath)) + ".lock")).toBeDefined();
 });
+test.each([
+  [
+    "object option",
+    (r: any) => {
+      r.selection.options = [{ id: "reasoning", value: { secret: "CANARY" } }];
+    },
+  ],
+  [
+    "object project created",
+    (r: any) => {
+      r.project.created = { secret: "CANARY" };
+    },
+  ],
+  [
+    "accepted requesting project",
+    (r: any) => {
+      r.preparation.project = "requesting";
+    },
+  ],
+  [
+    "accepted unattempted thread",
+    (r: any) => {
+      r.preparation.thread = "not-attempted";
+    },
+  ],
+  [
+    "accepted missing selection",
+    (r: any) => {
+      delete r.selection;
+    },
+  ],
+] as const)(
+  "A25/A28 rejects contradictory or nested receipt evidence: %s",
+  async (_name, mutate) => {
+    const f = await switchFixture(roots);
+    await dispatchT3Handoff(f.input);
+    const receipt = await f.receipt();
+    mutate(receipt);
+    await f.write(receipt);
+    const before = f.commands.length;
+    await expect(dispatchT3Handoff(f.input)).rejects.toMatchObject({ code: "T3_RECEIPT_INVALID" });
+    expect(f.commands).toHaveLength(before);
+  },
+);
+
 test("A28 accepted receipt extensions excluded from sanitized replay", async () => {
   const f = await switchFixture(roots);
   await dispatchT3Handoff(f.input);

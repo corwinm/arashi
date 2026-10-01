@@ -324,7 +324,15 @@ async function switchReceipts(
           value!.selection.model.trim() &&
           !/\p{Cc}/u.test(value!.selection.model)
         ) ||
-        !Array.isArray(value!.selection.options))
+        !Array.isArray(value!.selection.options) ||
+        !value!.selection.options.every(
+          (option) =>
+            option &&
+            identifier(option.id) &&
+            (typeof option.value === "string" ||
+              typeof option.value === "boolean" ||
+              (typeof option.value === "number" && Number.isFinite(option.value))),
+        ))
     ) {
       failure("T3_RECEIPT_INVALID", "Switch receipt selection is invalid.");
     }
@@ -364,6 +372,34 @@ async function switchReceipts(
         "T3_RECEIPT_INVALID",
         "Saved identifiers have conflicting evidence. Preserve and reconcile the receipt.",
       );
+    const progressed = native.phase === "submitting" || native.phase === "accepted";
+    const success =
+      value!.status === "succeeded" ||
+      value!.dispatch.status === "succeeded" ||
+      native.phase === "accepted";
+    if (
+      (value!.project.created !== null && typeof value!.project.created !== "boolean") ||
+      (preparation.project === "confirmed" && value!.project.id !== native.projectId) ||
+      (preparation.project !== "confirmed" && value!.project.id !== null) ||
+      (preparation.thread !== "not-attempted" && preparation.project !== "confirmed") ||
+      (preparation.thread === "confirmed" && value!.thread.id !== native.threadId) ||
+      (preparation.thread !== "confirmed" && value!.thread.id !== null) ||
+      (progressed &&
+        (preparation.project !== "confirmed" ||
+          preparation.thread !== "confirmed" ||
+          !value!.selection)) ||
+      (success &&
+        !(
+          value!.status === "succeeded" &&
+          value!.dispatch.status === "succeeded" &&
+          native.phase === "accepted"
+        ))
+    ) {
+      failure(
+        "T3_RECEIPT_INVALID",
+        "Saved preparation and dispatch evidence is contradictory. Preserve and reconcile the receipt.",
+      );
+    }
     receipts.push(projectReceipt(value!));
   }
   return receipts;
