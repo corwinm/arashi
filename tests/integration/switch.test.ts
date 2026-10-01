@@ -497,6 +497,9 @@ describe("switch command integration", () => {
           },
         );
 
+        if (typeof result === "number") {
+          throw new Error("Expected an ordinary switch execution result.");
+        }
         if ("expectedCd" in testCase && testCase.expectedCd) {
           expect(result.launchMode).toBe("cd");
           expect(launchOptions).toEqual([]);

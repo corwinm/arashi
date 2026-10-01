@@ -417,6 +417,23 @@ const accepted = (receipt: SwitchReceipt) =>
   receipt.status === "succeeded" &&
   receipt.native?.phase === "accepted" &&
   receipt.dispatch.status === "succeeded";
+function checkBlockingSwitchIntent(receipts: SwitchReceipt[], requestedIntentId: string): void {
+  const blocking = receipts.find(
+    (receipt) => receipt.intentId !== requestedIntentId && !accepted(receipt),
+  );
+  if (blocking) {
+    throw new T3HandoffError(
+      "T3_UNRESOLVED_HANDOFF",
+      "An unresolved sibling intent protects this checkout. Reconcile the saved intent; a fresh intent cannot bypass uncertainty.",
+      {
+        blockingIntentId: blocking.intentId,
+        requestedIntentId,
+        receiptPath: blocking.receiptPath,
+      },
+      publicResult(blocking),
+    );
+  }
+}
 export async function checkSwitchT3SiblingsForCreate(
   workspace: string,
   dependencies: T3HandoffDependencies,
@@ -455,12 +472,7 @@ export async function switchT3PinnedSettings(
     create,
     await switchGitIdentity(workspace),
   );
-  if (receipts.some((receipt) => receipt.intentId !== intent && !accepted(receipt))) {
-    failure(
-      "T3_UNRESOLVED_HANDOFF",
-      "An unresolved sibling intent protects this checkout; reconcile it before another handoff.",
-    );
-  }
+  checkBlockingSwitchIntent(receipts, intent);
   const saved = receipts.find((receipt) => receipt.intentId === intent);
   if (!saved) {
     return undefined;
@@ -537,14 +549,7 @@ export async function dispatchSwitchT3Handoff(input: Input): Promise<T3HandoffRe
     }
     const receipts = await switchReceipts(workspace, createPath, input.switch.selectedGitIdentity);
     const existing = receipts.find((receipt) => receipt.intentId === input.switch.intentId);
-    if (
-      receipts.some((receipt) => receipt.intentId !== input.switch.intentId && !accepted(receipt))
-    ) {
-      failure(
-        "T3_UNRESOLVED_HANDOFF",
-        "A different unresolved intent protects this checkout. Reconcile the saved intent; a fresh intent cannot bypass uncertainty.",
-      );
-    }
+    checkBlockingSwitchIntent(receipts, input.switch.intentId);
     if (existing) {
       if (existing.promptDigest !== input.request.promptDigest) {
         failure(

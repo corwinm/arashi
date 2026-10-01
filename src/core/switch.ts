@@ -115,6 +115,9 @@ export function filterSwitchCandidates(
   );
 }
 
+const cleanDisplay = (value: string) =>
+  value.replaceAll(/\p{Cc}\[[0-9;]*[A-Za-z]/gu, "").replaceAll(/\p{Cc}/gu, "");
+
 export async function selectSwitchCandidate(
   candidates: SwitchCandidate[],
   options: SelectSwitchCandidateOptions,
@@ -132,11 +135,17 @@ export async function selectSwitchCandidate(
   }
 
   if (!options.interactive) {
+    const choices = candidates.map((candidate) => ({
+      branchName: cleanDisplay(candidate.branchName),
+      repoName: cleanDisplay(candidate.repoName),
+      worktreePath: cleanDisplay(candidate.worktreePath),
+    }));
     throw new SwitchCommandError(
-      `Found ${candidates.length} matching worktrees. Provide a more specific filter, for example: aw switch <branch>.`,
+      `Found ${candidates.length} matching worktrees: ${choices.map((candidate) => `${candidate.branchName} in repository ${candidate.repoName} at ${candidate.worktreePath}`).join("; ")}. Select one exact checkout with --path <checkout>.`,
       SwitchCommandErrorCode.AMBIGUOUS_NON_INTERACTIVE,
       {
         matchCount: candidates.length,
+        candidates: choices,
       },
     );
   }

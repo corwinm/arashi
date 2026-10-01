@@ -305,7 +305,7 @@ By default, launch opens a new OS window or managed independent-session equivale
 
 export function executeSwitch(
   filter: string | undefined,
-  options: SwitchCommandOptions & { t3: boolean | string },
+  options: SwitchCommandOptions & { t3: true | string },
   deps?: SwitchCommandDependencies,
 ): Promise<number>;
 export function executeSwitch(
@@ -315,7 +315,7 @@ export function executeSwitch(
 ): Promise<number>;
 export function executeSwitch(
   filter: string | undefined,
-  options: SwitchCommandOptions & { json?: false },
+  options: SwitchCommandOptions & { t3?: false; json?: false },
   deps?: SwitchCommandDependencies,
 ): Promise<SwitchExecutionResult>;
 export function executeSwitch(
@@ -353,7 +353,10 @@ export async function executeSwitch(
       writeJsonEnvelope(
         createJsonErrorEnvelope("switch", {
           code: known.code ?? "T3_HANDOFF_FAILED",
-          details: known.details ?? {},
+          details:
+            normalizedError instanceof SwitchCommandError
+              ? (normalizedError.context ?? {})
+              : (known.details ?? {}),
           message: cleanDisplay(known.message ?? "Switch handoff failed."),
         }),
       );
@@ -539,8 +542,24 @@ async function executeSwitchSelected(
       totalCandidates: scopedCandidates.length,
       workspace: { mode: context.mode },
     };
-    const renderHandoff = (result: T3HandoffResult | undefined) => {
-      const output = switchT3Output(result, intentId, t3Request.permission);
+    const renderHandoff = (
+      result: T3HandoffResult | undefined,
+      recovery: Record<string, unknown> = {},
+      code?: string,
+    ) => {
+      const savedIntent =
+        typeof recovery.blockingIntentId === "string" ? recovery.blockingIntentId : intentId;
+      const output = switchT3Output(result, savedIntent, t3Request.permission);
+      const unknownBlockingIntent =
+        !result &&
+        Boolean(code && /^T3_(?:HANDOFF_LOCKED|UNRESOLVED_HANDOFF|RECEIPT_|LOCK_)/u.test(code));
+      if (!result && code === "T3_HANDOFF_LOCKED") {
+        output.retry.guidance =
+          "Preserve the shared lock. Confirm its owner has stopped and reconcile saved native evidence before manual lock removal; do not bypass it with another intent.";
+      } else if (!result && code && /^T3_(?:UNRESOLVED_HANDOFF|RECEIPT_|LOCK_)/u.test(code)) {
+        output.retry.guidance =
+          "Preserve the blocking receipt/lock and reconcile its original recovery state before another handoff. Do not bypass it with a fresh intent.";
+      }
       const child = workspace.repositories.some(
         (repository) =>
           repository.name === selected.repoName &&
@@ -552,7 +571,17 @@ async function executeSwitchSelected(
           : child
             ? " Keep --repos or --all for this child target."
             : "";
-      output.retry.guidance += ` Exact checkout: ${cleanDisplay(workspacePath)}; select it with --path and keep --t3-intent ${intentId}.${scopeHint} Reuse the original inline --t3 task or UTF-8 --prompt-file bytes in environment ${output.environment.id ?? "not yet verified"}. Retries reconcile saved evidence; an uncertain submission is never resent.`;
+      const intentHint = unknownBlockingIntent
+        ? "Recover the original saved handoff using its original command and intent before retrying the requested handoff."
+        : `Keep --t3-intent ${savedIntent}.`;
+      output.retry.guidance += ` Exact checkout: ${cleanDisplay(workspacePath)}; select it with --path.${scopeHint} ${intentHint} Reuse the original inline --t3 task or UTF-8 --prompt-file bytes in environment ${output.environment.id ?? "not yet verified"}. Retries reconcile saved evidence; an uncertain submission is never resent.`;
+      if (!output.receiptPath && typeof recovery.receiptPath === "string") {
+        output.receiptPath = recovery.receiptPath;
+      }
+      if (output.receiptPath) output.retry.guidance += ` Receipt: ${output.receiptPath}.`;
+      if (typeof recovery.lockPath === "string") {
+        output.retry.guidance += ` Lock: ${recovery.lockPath}.`;
+      }
       return output;
     };
     let handoff: T3HandoffResult | undefined;
@@ -590,8 +619,10 @@ async function executeSwitchSelected(
       handoff =
         (normalizedError instanceof T3HandoffError ? normalizedError.result : undefined) ??
         savedResult;
-      details.t3Handoff = renderHandoff(handoff);
       if (normalizedError instanceof T3HandoffError) {
+        const recovery = switchT3RecoveryDetails(normalizedError.details);
+        Object.assign(details, recovery);
+        details.t3Handoff = renderHandoff(handoff, recovery, normalizedError.code);
         throw new T3HandoffError(normalizedError.code, normalizedError.message, details, handoff);
       }
       throw normalizedError;
@@ -719,6 +750,14 @@ const handleSwitchError = (error: unknown): never => {
 
   logError(error instanceof Error ? error.message : String(error));
   if (error instanceof T3HandoffError) {
+    if (
+      typeof error.details.requestedIntentId === "string" &&
+      typeof error.details.blockingIntentId === "string"
+    ) {
+      info(
+        `Requested intent: ${cleanDisplay(error.details.requestedIntentId)}; blocking intent: ${cleanDisplay(error.details.blockingIntentId)}. Recover the blocking intent first.`,
+      );
+    }
     const selected = error.details.selected as
       | { branchName?: string; repoName?: string; worktreePath?: string }
       | undefined;
@@ -730,7 +769,7 @@ const handleSwitchError = (error: unknown): never => {
     const handoff = error.details.t3Handoff as ReturnType<typeof switchT3Output> | undefined;
     if (handoff) {
       info(
-        `Permission: ${handoff.permission}; intent: ${handoff.intentId}; environment: ${handoff.environment.id ?? "unknown"}; project: ${handoff.project.id ?? "unknown"}; thread: ${handoff.thread.id ?? "unknown"}; message: ${handoff.native?.messageId ?? "unknown"}`,
+        `Permission: ${handoff.permission}; intent: ${handoff.intentId}; environment: ${handoff.environment.id ?? handoff.native?.environmentId ?? "unknown"}; project: ${handoff.project.id ?? handoff.native?.projectId ?? "unknown"}; thread: ${handoff.thread.id ?? handoff.native?.threadId ?? "unknown"}; message: ${handoff.native?.messageId ?? "unknown"}`,
       );
       info(handoff.retry.guidance);
     }
@@ -1170,6 +1209,44 @@ const t3Enabled = (options: SwitchCommandOptions) =>
   options.t3 !== undefined && options.t3 !== false;
 const cleanDisplay = (value: string) =>
   value.replaceAll(/\p{Cc}\[[0-9;]*[A-Za-z]/gu, "").replaceAll(/\p{Cc}/gu, "");
+function switchT3RecoveryDetails(details: Record<string, unknown>): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  for (const key of ["blockingIntentId", "requestedIntentId", "receiptPath", "lockPath"]) {
+    if (typeof details[key] === "string") safe[key] = cleanDisplay(details[key]);
+  }
+  for (const key of ["lockCleanupFailed", "receiptWriteFailed"]) {
+    if (typeof details[key] === "boolean") safe[key] = details[key];
+  }
+  return safe;
+}
+function safeSwitchContext(context: Record<string, unknown> | undefined) {
+  if (!context) return undefined;
+  const safe: Record<string, unknown> = {};
+  for (const key of ["filter", "scope", "workspaceRoot"]) {
+    if (typeof context[key] === "string") safe[key] = cleanDisplay(context[key]);
+  }
+  if (typeof context.pathMode === "boolean") safe.pathMode = context.pathMode;
+  if (typeof context.matchCount === "number") safe.matchCount = context.matchCount;
+  if (Array.isArray(context.launchOverrides)) {
+    safe.launchOverrides = context.launchOverrides
+      .filter((value): value is string => typeof value === "string")
+      .map(cleanDisplay);
+  }
+  if (Array.isArray(context.candidates)) {
+    safe.candidates = context.candidates.map((candidate: unknown) => {
+      const value =
+        candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>) : {};
+      const choice: Record<string, string> = {};
+      for (const key of ["branchName", "repoName", "worktreePath"]) {
+        if (typeof value[key] === "string") {
+          choice[key] = cleanDisplay(value[key]);
+        }
+      }
+      return choice;
+    });
+  }
+  return safe;
+}
 const switchT3ExitCode = (error: unknown): number => {
   if (!(error instanceof T3HandoffError)) return USAGE_EXIT_CODE;
   if (error.result?.status === "succeeded") return ERROR_EXIT_CODE;
@@ -1187,12 +1264,9 @@ const safeSwitchT3Error = (error: unknown): Error => {
   }
   if (error instanceof SwitchCommandError) {
     return new SwitchCommandError(
-      cleanDisplay(error.message) +
-        (error.code === SwitchCommandErrorCode.AMBIGUOUS_NON_INTERACTIVE
-          ? " Select one exact checkout with --path <checkout>."
-          : ""),
+      cleanDisplay(error.message),
       error.code,
-      error.context,
+      safeSwitchContext(error.context),
     );
   }
   if (error instanceof T3HandoffError) {
@@ -1230,7 +1304,11 @@ function sanitizedHandoff(result: T3HandoffResult): T3HandoffResult {
     retry: {
       safe: false,
       guidance:
-        "Manually select the reported native project/thread. No UI opened. Reconcile this exact path and saved intent in the original environment; reuse the same prompt for retries, never bypass uncertainty with a fresh intent.",
+        result.dispatch.status === "succeeded"
+          ? "Task accepted. Manually select the reported native project/thread; no UI opened. Preserve acceptance and saved IDs; retries reconcile acceptance without resubmitting."
+          : result.native?.phase === "preparing"
+            ? "Reconcile saved preparation IDs using official project/thread evidence. Same-intent preparation may continue only after positive evidence permits it; never bypass uncertainty with a fresh intent."
+            : "Retry only for read-only reconciliation of the saved user message in the original environment. An uncertain submission is never resent; never bypass it with a fresh intent.",
     },
     status: result.status,
     thread: { id: clean(result.thread?.id), title: null },

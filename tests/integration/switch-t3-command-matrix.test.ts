@@ -293,7 +293,20 @@ describe("issue392 A03 finite empty/no-match/ambiguous/cancel selection", () => 
       if (json) {
         const error = envelope(out).error;
         expect(error.code).toBe(code);
-        if (kind === "multiple") expect(JSON.stringify(error)).toMatch(/--path/);
+        if (kind === "multiple") {
+          expect(error.message).toContain("--path <checkout>");
+          expect(error.details).toMatchObject({ matchCount: 2 });
+          expect(error.details.candidates).toEqual(
+            expect.arrayContaining([
+              { branchName: "main", repoName: basename(f.parent), worktreePath: f.parent },
+              {
+                branchName: "feature/shared",
+                repoName: basename(f.parent),
+                worktreePath: f.linked,
+              },
+            ]),
+          );
+        }
       } else if (boundary === "executor") expect(out.error).toMatchObject({ code });
       else
         expect(out.stderr()).toMatch(
@@ -303,6 +316,14 @@ describe("issue392 A03 finite empty/no-match/ambiguous/cancel selection", () => 
               ? /targets|worktree/i
               : /match/i,
         );
+      if (kind === "multiple" && !json) {
+        const message =
+          boundary === "executor" ? (out.error as Error).message : out.stdout() + out.stderr();
+        expect(message).toContain(f.parent);
+        expect(message).toContain(f.linked);
+        expect(message).toContain("feature/shared");
+        expect(message).toContain("--path <checkout>");
+      }
       expect(native.prompt).not.toHaveBeenCalled();
       noNativeEffects();
     }
