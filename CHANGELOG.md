@@ -1,3 +1,14 @@
+## [1.40.0](https://github.com/corwinm/arashi/compare/v1.39.0...v1.40.0) (2026-10-03)
+
+### Features
+
+- **switch:** hand existing checkouts to native T3 ([#207](https://github.com/corwinm/arashi/issues/207)) ([b39d1dd](https://github.com/corwinm/arashi/commit/b39d1dd41f52d025458697750ad735ebc4ff9d28))
+
+### Bug Fixes
+
+- **cli:** use aw in help examples and hints ([#206](https://github.com/corwinm/arashi/issues/206)) ([ac39e1b](https://github.com/corwinm/arashi/commit/ac39e1b51a096568eae52fbcde21f1966b0bc2a5))
+- **switch:** show relative paths for renamed worktrees ([#209](https://github.com/corwinm/arashi/issues/209)) ([c2e64de](https://github.com/corwinm/arashi/commit/c2e64dee030ddb9680c434a3227a9e003142a4ba))
+
 ## [1.39.0](https://github.com/corwinm/arashi/compare/v1.38.0...v1.39.0) (2026-09-30)
 
 ### Features
