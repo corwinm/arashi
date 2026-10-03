@@ -611,6 +611,9 @@ export const dispatchT3Handoff = async (input: {
   }
 
   const receiptPath = await t3ReceiptPath(workspacePath, dependencies);
+  // Prove existing protection before lock acquisition can repair the root ACL.
+  // Repeat admission under the lock to retain the shared uncertainty barrier.
+  await checkSwitchT3SiblingsForCreate(workspacePath, dependencies);
   const releaseReceiptLock = await acquireReceiptLock(receiptPath, dependencies);
   const execute = async (): Promise<T3HandoffResult> => {
     await checkSwitchT3SiblingsForCreate(workspacePath, dependencies);
