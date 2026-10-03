@@ -236,7 +236,9 @@ function buildChoiceNames(
   const useRepoPrefix = uniqueRepos.size > 1;
   const normalizedWorkspaceRepoName = options.workspaceRepoName?.trim();
   const displayPath = (candidate: SwitchCandidate) =>
-    cleanDisplay(relative(options.displayRoot!, candidate.worktreePath) || ".");
+    cleanDisplay(
+      (relative(options.displayRoot!, candidate.worktreePath) || ".").split(sep).join("/"),
+    );
   const baseNames = candidates.map((candidate) => {
     const branch = cleanDisplay(candidate.branchName);
     const label =
