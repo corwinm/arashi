@@ -450,7 +450,7 @@ describe("native T3 receipt protection", () => {
   test("fails closed on corrupt receipts and stale/concurrent locks", async () => {
     const fixture = await handoffFixture();
     const path = await t3ReceiptPath(fixture.input.workspacePath, fixture.input.dependencies);
-    await mkdir(join(path, ".."), { recursive: true });
+    await mkdir(join(path, ".."), { mode: 0o700, recursive: true });
     await writeFile(path, "{}");
     await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       code: "T3_RECEIPT_INVALID",

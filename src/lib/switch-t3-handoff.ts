@@ -178,14 +178,7 @@ async function plain(
 }
 async function validateRoot(createPath: string, dependencies: T3HandoffDependencies) {
   const root = dirname(createPath);
-  if (
-    !(await plain(
-      root,
-      true,
-      (dependencies.platform ?? process.platform) === "win32",
-      dependencies,
-    ))
-  ) {
+  if (!(await plain(root, true, true, dependencies))) {
     return;
   }
   for (const name of await readdir(root)) {
