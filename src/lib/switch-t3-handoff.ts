@@ -494,12 +494,30 @@ export async function checkSwitchT3SiblingsForCreate(
     );
   }
 }
+/** Bind reused intents to selection identity, never sanitized presentation labels. */
+function checkSwitchT3IntentTarget(
+  saved: SwitchReceipt,
+  requested: { branch: string; repository: string },
+): void {
+  if (saved.branch !== requested.branch || saved.repository !== requested.repository) {
+    failure(
+      "T3_HANDOFF_INTENT_CHANGED",
+      "The branch or repository changed under this saved intent. Select the original branch and repository to reconcile it; only after resolution may a deliberate fresh intent start another handoff.",
+      publicResult(saved),
+    );
+  }
+}
 /** Read-only admission hint; final admission and identity checks repeat under the dispatch lock. */
 export async function switchT3PinnedSettings(
   workspace: string,
   intent: string,
   dependencies: T3HandoffDependencies = {},
-  requested?: { promptDigest: string; explicitSettings: Record<string, string> },
+  requested?: {
+    branch: string;
+    repository: string;
+    promptDigest: string;
+    explicitSettings: Record<string, string>;
+  },
 ): Promise<{ settings: T3Settings; result: T3HandoffResult } | undefined> {
   const create = await t3ReceiptPath(workspace, dependencies);
   if (await metadata(create + ".lock")) {
@@ -522,6 +540,7 @@ export async function switchT3PinnedSettings(
     return undefined;
   }
   if (requested) {
+    checkSwitchT3IntentTarget(saved, requested);
     if (saved.promptDigest !== requested.promptDigest) {
       failure(
         "T3_HANDOFF_INTENT_CHANGED",
@@ -602,6 +621,10 @@ export async function dispatchSwitchT3Handoff(input: Input): Promise<T3HandoffRe
     const existing = receipts.find((receipt) => receipt.intentId === input.switch.intentId);
     checkBlockingSwitchIntent(receipts, input.switch.intentId);
     if (existing) {
+      checkSwitchT3IntentTarget(existing, {
+        branch: input.branch,
+        repository: input.switch.repository,
+      });
       if (existing.promptDigest !== input.request.promptDigest) {
         failure(
           "T3_HANDOFF_INTENT_CHANGED",

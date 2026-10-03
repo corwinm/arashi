@@ -589,8 +589,10 @@ async function executeSwitchSelected(
     try {
       await revalidateSwitchGitIdentity(workspacePath, identity, selected.branchName);
       const admission = await switchT3PinnedSettings(workspacePath, intentId, deps.t3, {
+        branch: selected.branchName,
         explicitSettings,
         promptDigest: t3Request.promptDigest,
+        repository: selected.repoName,
       });
       savedResult = admission?.result;
       const environment = await preflightT3Native(

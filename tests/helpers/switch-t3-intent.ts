@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { expect } from "vitest";
 import type { dispatchT3Handoff } from "../../src/lib/t3-handoff.ts";
@@ -89,7 +89,7 @@ export async function switchFixture(roots: string[]) {
       explicitSettings: {},
       provenance: {},
       selectedGitIdentity: await identity(workspacePath),
-      repository: "fixture",
+      repository: basename(workspacePath),
     },
     workspacePath,
   };
