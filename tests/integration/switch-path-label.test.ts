@@ -1,11 +1,57 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { expect, test } from "vitest";
 import { executeSwitch } from "../../src/commands/switch.ts";
 import { selectSwitchCandidate } from "../../src/core/switch.ts";
 import { calculateWorktreePathPlan } from "../../src/core/worktree.ts";
+
+test("keeps minimum fitted namespaces concise at filesystem-root bases", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "switch-root-budget-")));
+  try {
+    execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
+    const parent = { name: "workspace", path: root, defaultBranch: "main", hasSetupScript: false };
+    const base = parse(root).root;
+    const branch = "feature/long-branch-name";
+    const plan = await calculateWorktreePathPlan(
+      [parent],
+      branch,
+      {
+        version: "1.0.0",
+        reposDir: "repos",
+        repos: {},
+        worktreesDir: base,
+        worktreeNaming: { style: "branch", maxPathLength: join(base, "-00000000").length },
+      },
+      parent,
+    );
+    const candidate = {
+      repoName: parent.name,
+      branchName: branch,
+      worktreePath: plan.get(parent)!.path,
+    };
+    expect(candidate.worktreePath).toMatch(/-[a-f0-9]{8}$/);
+    await selectSwitchCandidate(
+      [candidate, { ...candidate, branchName: "main", worktreePath: root }],
+      {
+        interactive: true,
+        displayRoot: root,
+        worktreesBase: base,
+        repositories: [parent],
+        workspaceRepoName: parent.name,
+      },
+      {
+        selectPrompt: async (_message, choices) => {
+          expect(choices.map((choice) => choice.name)).toEqual([branch, "main"]);
+          return { status: "ok", value: candidate };
+        },
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test.each(["branch", "repo-branch"] as const)(
   "keeps path-budgeted %s names concise for parent and child checkouts",

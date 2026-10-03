@@ -235,7 +235,10 @@ function worktreeNameMatchesBranch(
       // Validate the exact generated prefix AND hash using create's fitter. The
       // observed parent length recovers the available namespace budget, including
       // coordinated child-only/subset plans, without guessing the creation scope.
-      if (namedPath.length < base.length + 10 || namedPath.length >= ordinaryPath.length)
+      if (
+        namedPath.length < resolve(base, "-00000000").length ||
+        namedPath.length >= ordinaryPath.length
+      )
         return false;
       return (
         namedPath ===
