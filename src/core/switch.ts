@@ -2,6 +2,7 @@ import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { basename, relative, resolve, sep } from "path";
 import type { WorkspaceRepository } from "../lib/config.ts";
 import type { WorktreeInfo } from "../types/remove.ts";
+import { fitConfiguredParentWorktreePath } from "./worktree.ts";
 import { discoverAllWorktrees } from "./remove.ts";
 import { select as promptSelect } from "../lib/prompts.ts";
 
@@ -218,13 +219,30 @@ function worktreeNameMatchesBranch(
       namedPath = path.slice(0, -childPath.length - 1);
     }
   }
-  const namespace = basename(root).replace(/\.git$/i, "");
-  // Recognize both current and previously configured naming styles. Changing
-  // naming configuration does not rename existing worktrees.
+  const namespace = (
+    options.repositories?.find((repo) => resolve(repo.path) === root)?.name ?? basename(root)
+  ).replace(/\.git$/i, "");
+  const base = resolve(options.worktreesBase ?? root);
+  // Existing checkouts retain their names when naming policy or path budgets change.
   return [candidate.branchName, candidate.branchName.replaceAll("/", "-")].some((branch) =>
-    [branch, `${namespace}-${branch}`, `${namespace}/${branch}`].some(
-      (name) => namedPath === resolve(options.worktreesBase ?? root, ...name.split("/")),
-    ),
+    [branch, `${namespace}-${branch}`, `${namespace}/${branch}`].some((name) => {
+      const ordinaryPath = resolve(base, ...name.split("/"));
+      if (namedPath === ordinaryPath) return true;
+      // Validate the exact generated prefix AND hash using create's fitter. The
+      // observed parent length recovers the available namespace budget, including
+      // coordinated child-only/subset plans, without guessing the creation scope.
+      if (namedPath.length < base.length + 10 || namedPath.length >= ordinaryPath.length)
+        return false;
+      return (
+        namedPath ===
+        fitConfiguredParentWorktreePath({
+          destinations: [{ repositoryName: candidate.repoName }],
+          maxPathLength: namedPath.length,
+          ordinaryParentWorktreePath: ordinaryPath,
+          worktreeBasePath: base,
+        })
+      );
+    }),
   );
 }
 

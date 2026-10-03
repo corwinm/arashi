@@ -5,8 +5,87 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import { executeSwitch } from "../../src/commands/switch.ts";
 import { selectSwitchCandidate } from "../../src/core/switch.ts";
+import { calculateWorktreePathPlan } from "../../src/core/worktree.ts";
 
-test.each(["standalone", "configured"])(
+test.each(["branch", "repo-branch"] as const)(
+  "keeps path-budgeted %s names concise for parent and child checkouts",
+  async (style) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "switch-budget-")));
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
+      const parent = {
+        name: "workspace",
+        path: root,
+        defaultBranch: "main",
+        hasSetupScript: false,
+      };
+      const child = {
+        name: "docs",
+        path: join(root, "projects/docs"),
+        defaultBranch: "main",
+        hasSetupScript: false,
+      };
+      const base = join(root, ".arashi/worktrees");
+      const branch = "feature/a-very-long-generated-branch-name";
+      const plan = await calculateWorktreePathPlan(
+        [parent, child],
+        branch,
+        {
+          version: "1.0.0",
+          reposDir: "projects",
+          repos: {},
+          worktreesDir: ".arashi/worktrees",
+          worktreeNaming: { style, maxPathLength: base.length + 19 + "/projects/docs".length },
+        },
+        parent,
+      );
+      const candidates = [parent, child].map((repo) => ({
+        repoName: repo.name,
+        branchName: branch,
+        worktreePath: plan.get(repo)!.path,
+      }));
+      expect(candidates[0].worktreePath).toMatch(/-[a-f0-9]{8}$/);
+      await selectSwitchCandidate(
+        candidates,
+        {
+          interactive: true,
+          displayRoot: root,
+          worktreesBase: base,
+          repositories: [parent, child],
+          workspaceRepoName: "workspace",
+        },
+        {
+          selectPrompt: async (_message, choices) => {
+            expect(choices.map((choice) => choice.name)).toEqual([branch, `docs (${branch})`]);
+            return { status: "ok", value: candidates[0] };
+          },
+        },
+      );
+      const changed = { ...candidates[0], branchName: "feature/changed-branch-name" };
+      await selectSwitchCandidate(
+        [changed, candidates[1]],
+        {
+          interactive: true,
+          displayRoot: root,
+          worktreesBase: base,
+          repositories: [parent, child],
+          workspaceRepoName: "workspace",
+        },
+        {
+          selectPrompt: async (_message, choices) => {
+            expect(choices.find((choice) => choice.value === changed)!.name).toContain(
+              "feature/changed-branch-name - .arashi/worktrees/",
+            );
+            return { status: "ok", value: changed };
+          },
+        },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+test.each(["standalone", "configured", "tracked-configured"])(
   "switch labels a reused checkout from a linked %s invocation",
   async (mode) => {
     const originalCwd = process.cwd();
@@ -38,7 +117,7 @@ test.each(["standalone", "configured"])(
         "-m",
         "base",
       ]);
-      if (mode === "configured") {
+      if (mode !== "standalone") {
         await mkdir(join(repository, ".arashi"));
         await writeFile(
           join(repository, ".arashi/config.json"),
@@ -49,6 +128,18 @@ test.each(["standalone", "configured"])(
             worktreesDir: worktrees,
           }),
         );
+      }
+      if (mode === "tracked-configured") {
+        git(["add", ".arashi/config.json"]);
+        git([
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "-m",
+          "tracked config",
+        ]);
       }
       git(["worktree", "add", "-b", "review", reused]);
       git(["switch", "-c", "feature/new"], reused);

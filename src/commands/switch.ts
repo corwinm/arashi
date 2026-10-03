@@ -488,17 +488,22 @@ async function executeSwitchSelected(
     (deps.stdinIsTTY ?? process.stdin.isTTY) &&
     (deps.stdoutIsTTY ?? process.stdout.isTTY),
   );
+  const displayRoot =
+    (context.mode === "unavailable" ? undefined : context.effective?.mainRoot) ?? configurationRoot;
   const selected = await chooseCandidate(matchedCandidates, {
     interactive,
-    displayRoot: configurationRoot,
-    worktreesBase:
-      (context.mode === "unavailable" ? undefined : context.effective?.worktreesBase) ??
-      resolve(configurationRoot, workspace.config?.worktreesDir ?? ".arashi/worktrees"),
+    displayRoot,
+    worktreesBase: resolve(
+      displayRoot,
+      (context.mode === "unavailable" ? undefined : context.config.worktreesDir) ??
+        workspace.config?.worktreesDir ??
+        ".arashi/worktrees",
+    ),
     repositories: workspace.repositories.map((repo) => ({
       ...repo,
-      path: resolve(configurationRoot, relative(workspaceRoot, repo.path)),
+      path: resolve(displayRoot, relative(workspaceRoot, repo.path)),
     })),
-    workspaceRepoName: scope === "all" ? basename(resolve(workspaceRoot)) : undefined,
+    workspaceRepoName: scope === "all" ? basename(resolve(displayRoot)) : undefined,
   });
 
   if (t3Request) {
