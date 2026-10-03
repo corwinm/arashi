@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { exec } from "./git.ts";
+import { assertWindowsOwnerOnlyAcl } from "./delete-transaction.ts";
 import { T3HandoffError } from "./t3-error.ts";
 import {
   acquireReceiptLock,
@@ -18,6 +19,7 @@ import type {
 } from "./t3-handoff.ts";
 import {
   identifier,
+  nativeChildEnvironment,
   readT3CliVersion,
   readT3Config,
   record,
@@ -104,9 +106,14 @@ const sameIdentity = (left: SwitchGitIdentity, right: SwitchGitIdentity) =>
 export async function revalidateSwitchGitIdentity(
   path: string,
   expected: SwitchGitIdentity,
+  selectedBranch: string,
 ): Promise<void> {
   try {
-    if (!sameIdentity(await switchGitIdentity(path), expected)) {
+    // Match the selected symbolic branch, not its tip: working edits and commits
+    // on that branch remain allowed. Detached HEAD is not the selected branch.
+    const current = await switchGitIdentity(path);
+    const head = (await exec(["symbolic-ref", "--quiet", "HEAD"], path)).stdout.trim();
+    if (!sameIdentity(current, expected) || head !== `refs/heads/${selectedBranch}`) {
       failure(
         "T3_WORKSPACE_CHANGED",
         "The selected checkout was replaced or changed. Select it again before handoff.",
@@ -132,15 +139,35 @@ async function metadata(path: string) {
     throw error;
   }
 }
-async function plain(path: string, directory: boolean, ownerOnly = false) {
+async function plain(
+  path: string,
+  directory: boolean,
+  ownerOnly = false,
+  dependencies: T3HandoffDependencies = {},
+) {
   const info = await metadata(path);
   if (!info) {
     return false;
   }
+  let protectedEntry = true;
+  if (ownerOnly) {
+    if ((dependencies.platform ?? process.platform) === "win32") {
+      try {
+        protectedEntry = await (
+          dependencies.assertWindowsOwnerOnly ??
+          ((target: string) => assertWindowsOwnerOnlyAcl(target, nativeChildEnvironment()))
+        )(path);
+      } catch {
+        protectedEntry = false;
+      }
+    } else {
+      protectedEntry = (info.mode & 0o077) === 0;
+    }
+  }
   if (
     info.isSymbolicLink() ||
     (directory ? !info.isDirectory() : !info.isFile()) ||
-    (ownerOnly && process.platform !== "win32" && (info.mode & 0o077) !== 0)
+    !protectedEntry
   ) {
     failure(
       "T3_RECEIPT_UNSAFE",
@@ -149,9 +176,16 @@ async function plain(path: string, directory: boolean, ownerOnly = false) {
   }
   return true;
 }
-async function validateRoot(createPath: string) {
+async function validateRoot(createPath: string, dependencies: T3HandoffDependencies) {
   const root = dirname(createPath);
-  if (!(await plain(root, true))) {
+  if (
+    !(await plain(
+      root,
+      true,
+      (dependencies.platform ?? process.platform) === "win32",
+      dependencies,
+    ))
+  ) {
     return;
   }
   for (const name of await readdir(root)) {
@@ -263,15 +297,19 @@ async function switchReceipts(
   workspace: string,
   createPath: string,
   identity: SwitchGitIdentity,
+  dependencies: T3HandoffDependencies,
 ): Promise<SwitchReceipt[]> {
   const directory = createPath.slice(0, -5) + ".switch";
-  if (!(await plain(directory, true, true))) {
+  if (!(await plain(directory, true, true, dependencies))) {
     return [];
   }
   const receipts: SwitchReceipt[] = [];
   for (const name of await readdir(directory)) {
     const path = join(directory, name);
-    if (!/^i-(?:[a-f0-9]{2})+\.json$/u.test(name) || !(await plain(path, false, true))) {
+    if (
+      !/^i-(?:[a-f0-9]{2})+\.json$/u.test(name) ||
+      !(await plain(path, false, true, dependencies))
+    ) {
       failure(
         "T3_RECEIPT_UNSAFE",
         "Unknown or unsafe switch receipt entry. Preserve storage and reconcile before retrying.",
@@ -439,11 +477,16 @@ export async function checkSwitchT3SiblingsForCreate(
   dependencies: T3HandoffDependencies,
 ): Promise<void> {
   const create = await t3ReceiptPath(workspace, dependencies);
-  await validateRoot(create);
+  await validateRoot(create, dependencies);
   // Existing create fixtures and adapters need no new identity probe when there
   // is no switch namespace. Its receipt path/schema and recovery stay unchanged.
-  if (!(await plain(create.slice(0, -5) + ".switch", true, true))) return;
-  const receipts = await switchReceipts(workspace, create, await switchGitIdentity(workspace));
+  if (!(await plain(create.slice(0, -5) + ".switch", true, true, dependencies))) return;
+  const receipts = await switchReceipts(
+    workspace,
+    create,
+    await switchGitIdentity(workspace),
+    dependencies,
+  );
   if (receipts.some((receipt) => !accepted(receipt))) {
     failure(
       "T3_UNRESOLVED_HANDOFF",
@@ -466,11 +509,12 @@ export async function switchT3PinnedSettings(
       { lockPath: create + ".lock" },
     );
   }
-  await validateRoot(create);
+  await validateRoot(create, dependencies);
   const receipts = await switchReceipts(
     await realpath(workspace),
     create,
     await switchGitIdentity(workspace),
+    dependencies,
   );
   checkBlockingSwitchIntent(receipts, intent);
   const saved = receipts.find((receipt) => receipt.intentId === intent);
@@ -526,14 +570,16 @@ export async function dispatchSwitchT3Handoff(input: Input): Promise<T3HandoffRe
   validateSwitchT3Intent(input.switch.intentId);
   const dependencies = input.dependencies ?? {};
   const workspace = await realpath(input.workspacePath);
-  await revalidateSwitchGitIdentity(workspace, input.switch.selectedGitIdentity);
+  await revalidateSwitchGitIdentity(workspace, input.switch.selectedGitIdentity, input.branch);
   const createPath = await t3ReceiptPath(workspace, dependencies);
+  // Admission must prove existing protection before any ACL repair can hide it.
+  await validateRoot(createPath, dependencies);
   const release = await acquireReceiptLock(createPath, dependencies);
   let result: T3HandoffResult | undefined;
   let failureOutcome: unknown;
   const run = async () => {
-    await validateRoot(createPath);
-    await revalidateSwitchGitIdentity(workspace, input.switch.selectedGitIdentity);
+    await validateRoot(createPath, dependencies);
+    await revalidateSwitchGitIdentity(workspace, input.switch.selectedGitIdentity, input.branch);
     const legacy = await readReceipt(createPath);
     if (
       legacy &&
@@ -547,7 +593,12 @@ export async function dispatchSwitchT3Handoff(input: Input): Promise<T3HandoffRe
         "Existing create receipt requires its original recovery before switch can hand off.",
       );
     }
-    const receipts = await switchReceipts(workspace, createPath, input.switch.selectedGitIdentity);
+    const receipts = await switchReceipts(
+      workspace,
+      createPath,
+      input.switch.selectedGitIdentity,
+      dependencies,
+    );
     const existing = receipts.find((receipt) => receipt.intentId === input.switch.intentId);
     checkBlockingSwitchIntent(receipts, input.switch.intentId);
     if (existing) {
@@ -743,7 +794,11 @@ export async function dispatchSwitchT3Handoff(input: Input): Promise<T3HandoffRe
             ...(effort ? { effort } : {}),
           };
           const post = async (command: Record<string, unknown>) => {
-            await revalidateSwitchGitIdentity(workspace, input.switch.selectedGitIdentity);
+            await revalidateSwitchGitIdentity(
+              workspace,
+              input.switch.selectedGitIdentity,
+              input.branch,
+            );
             const acknowledgement = await request("/api/orchestration/dispatch", command);
             if (typeof acknowledgement.sequence !== "number") {
               failure(

@@ -30,6 +30,7 @@ test("A25 injected checkout hash collision fails physical identity validation", 
   expect(await t3ReceiptPath(linked)).toBe(await t3ReceiptPath(original));
   const before = f.commands.length;
   f.input.workspacePath = linked;
+  f.input.branch = "collision";
   f.input.switch!.selectedGitIdentity = await identity(linked);
   await expect(dispatchT3Handoff(f.input)).rejects.toThrow();
   expect(f.commands).toHaveLength(before);

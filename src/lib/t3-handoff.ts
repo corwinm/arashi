@@ -126,6 +126,7 @@ export interface T3HandoffDependencies extends T3NativeDependencies {
   ) => Promise<T3ProcessResult>;
   resolveGitCommonDirectory?: (workspacePath: string) => Promise<string>;
   setWindowsOwnerOnly?: (path: string) => Promise<void>;
+  assertWindowsOwnerOnly?: (path: string) => Promise<boolean>;
   syncDirectory?: (path: string) => Promise<void>;
   removeReceiptLock?: (path: string) => Promise<void>;
   /** Internal finite fault-injection seam; no CLI or remote API surface. */

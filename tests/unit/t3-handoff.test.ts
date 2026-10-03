@@ -542,6 +542,7 @@ describe("native T3 receipt protection", () => {
     const fixture = await handoffFixture();
     const paths: string[] = [];
     fixture.input.dependencies.platform = "win32";
+    fixture.input.dependencies.assertWindowsOwnerOnly = async () => true;
     fixture.input.dependencies.setWindowsOwnerOnly = async (path) => {
       paths.push(path);
     };

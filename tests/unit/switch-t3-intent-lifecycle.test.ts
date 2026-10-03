@@ -37,6 +37,7 @@ test.each(
   const f = await switchFixture(roots);
   f.input.switch!.intentId = intentId;
   f.dependencies.platform = platform;
+  f.dependencies.assertWindowsOwnerOnly = async () => true;
   const acl: string[] = [];
   f.dependencies.setWindowsOwnerOnly = async (path) => {
     acl.push(path);

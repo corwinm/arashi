@@ -13,6 +13,7 @@ async function pair() {
   const linked = join(a.root, "independent-linked");
   await git(a.input.workspacePath, "worktree", "add", "-b", "independent", linked);
   b.input.workspacePath = linked;
+  b.input.branch = "independent";
   b.input.switch!.selectedGitIdentity = await identity(linked);
   // Two injected clients of one official fixture, with snapshots containing both exact roots.
   for (const [current, other] of [

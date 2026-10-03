@@ -883,8 +883,10 @@ describe("issue392 A28 command allowlisted outputs and secrecy", () => {
       path: true,
       json,
     });
-    expect(out.exitCode).toBe(surface === "error" ? 1 : 0);
-    expect(native.dispatch).toHaveBeenCalledTimes(1);
+    // Injected control characters cannot name the actual selected Git branch;
+    // fail closed before dispatch, while preserving sanitized failure output.
+    expect(out.exitCode).toBe(surface === "error" || kind === "control-characters" ? 1 : 0);
+    expect(native.dispatch).toHaveBeenCalledTimes(kind === "control-characters" ? 0 : 1);
     expect(native.launch).not.toHaveBeenCalled();
     const text =
       surface === "stdout"

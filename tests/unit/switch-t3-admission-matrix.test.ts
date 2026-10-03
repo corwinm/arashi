@@ -35,6 +35,7 @@ async function fixture(invocation: string, target: string) {
     invocation === "main" ? parent : invocation === "linked-parent" ? parentLinked : childLinked,
   );
   f.input.workspacePath = selected;
+  f.input.branch = await git(selected, "symbolic-ref", "--short", "HEAD");
   f.input.switch!.selectedGitIdentity = await identity(selected);
   f.input.switch!.repository = target.startsWith("parent") ? "parent" : "child";
   const createPath = await t3ReceiptPath(selected);

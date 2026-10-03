@@ -17,7 +17,14 @@ vi.mock("node:child_process", async (importOriginal) => {
         return actual(command, args, options);
       }
       calls.push({ args, command, options });
-      return { stderr: "", stdout: "" };
+      return {
+        stderr: "",
+        stdout: JSON.stringify({
+          owner: "fixture-owner",
+          currentUser: "fixture-owner",
+          access: [{ identity: "fixture-owner", type: "Allow" }],
+        }),
+      };
     },
   });
   return { ...original, execFile: replacement };
@@ -46,14 +53,18 @@ test.each(["directory", "lock", "temporary"])(
     f.dependencies.platform = "win32";
     const result = await dispatchT3Handoff(f.input);
     expect(result.status).toBe("succeeded");
-    const matching = calls.filter((call) =>
-      kind === "lock"
-        ? call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".lock")
-        : kind === "temporary"
-          ? call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".tmp")
-          : !call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".lock") &&
-            !call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".tmp"),
-    );
+    const matching = calls
+      .filter((call) =>
+        Buffer.from(call.args[4]!, "base64").toString("utf16le").includes("SetOwner($identity)"),
+      )
+      .filter((call) =>
+        kind === "lock"
+          ? call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".lock")
+          : kind === "temporary"
+            ? call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".tmp")
+            : !call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".lock") &&
+              !call.options.env?.ARASHI_T3_RECEIPT_PATH?.endsWith(".tmp"),
+      );
     expect(matching.length).toBeGreaterThan(0);
     for (const call of matching) {
       expect(call.options.env).not.toHaveProperty("ARASHI_DIRECTIVE_FILE");

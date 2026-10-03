@@ -22,6 +22,7 @@ test.each(storageModes)("A18 A25 $0 encoded literals remain distinct", async (st
   const f = await switchFixture(roots);
   if (storage === "windows-ACL-simulation") {
     f.dependencies.platform = "win32";
+    f.dependencies.assertWindowsOwnerOnly = async () => true;
     f.dependencies.setWindowsOwnerOnly = async () => {};
   }
   const names: string[] = [];
@@ -179,6 +180,7 @@ test.each(["linux", "darwin", "win32"] as const)(
   async (platform) => {
     const f = await switchFixture(roots);
     f.dependencies.platform = platform;
+    f.dependencies.assertWindowsOwnerOnly = async () => true;
     const acl: string[] = [];
     f.dependencies.setWindowsOwnerOnly = async (path) => {
       acl.push(path);
@@ -209,6 +211,7 @@ test.each(["root", "switch-directory", "lock", "temporary"])(
   async (kind) => {
     const f = await switchFixture(roots);
     f.dependencies.platform = "win32";
+    f.dependencies.assertWindowsOwnerOnly = async () => true;
     let hit = false;
     f.dependencies.setWindowsOwnerOnly = async (path) => {
       const matches =

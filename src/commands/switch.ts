@@ -587,6 +587,7 @@ async function executeSwitchSelected(
     let handoff: T3HandoffResult | undefined;
     let savedResult: T3HandoffResult | undefined;
     try {
+      await revalidateSwitchGitIdentity(workspacePath, identity, selected.branchName);
       const admission = await switchT3PinnedSettings(workspacePath, intentId, deps.t3, {
         explicitSettings,
         promptDigest: t3Request.promptDigest,
@@ -597,7 +598,7 @@ async function executeSwitchSelected(
         deps.t3,
         admission?.settings ?? settings,
       );
-      await revalidateSwitchGitIdentity(workspacePath, identity);
+      await revalidateSwitchGitIdentity(workspacePath, identity, selected.branchName);
       handoff = await (deps.dispatchT3Handoff ?? dispatchT3Handoff)({
         branch: selected.branchName,
         dependencies: deps.t3,
