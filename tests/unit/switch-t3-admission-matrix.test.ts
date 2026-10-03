@@ -188,7 +188,7 @@ test.each(positions)(
   async ({ invocation, target }) => {
     const f = await fixture(invocation, target);
     const lock = f.createPath + ".lock";
-    await mkdir(dirname(lock), { recursive: true });
+    await mkdir(dirname(lock), { mode: 0o700, recursive: true });
     await writeFile(lock, "dead-owner");
     for (const kind of ["create", "switch"]) {
       await expect(

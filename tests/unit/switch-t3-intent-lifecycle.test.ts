@@ -231,7 +231,7 @@ test.each(["same", "different"])(
   async (kind) => {
     const f = await switchFixture(roots);
     const lock = (await t3ReceiptPath(f.input.workspacePath)) + ".lock";
-    await mkdir(dirname(lock), { recursive: true });
+    await mkdir(dirname(lock), { mode: 0o700, recursive: true });
     await writeFile(lock, "dead-owner");
     if (kind === "different") f.input.environment.environmentId = "different";
     await expect(dispatchT3Handoff(f.input)).rejects.toMatchObject({
