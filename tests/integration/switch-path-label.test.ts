@@ -85,7 +85,7 @@ test.each(["branch", "repo-branch"] as const)(
     }
   },
 );
-test.each(["standalone", "configured", "tracked-configured"])(
+test.each(["standalone", "configured", "tracked-configured", "tracked-repo-prefix"])(
   "switch labels a reused checkout from a linked %s invocation",
   async (mode) => {
     const originalCwd = process.cwd();
@@ -129,7 +129,7 @@ test.each(["standalone", "configured", "tracked-configured"])(
           }),
         );
       }
-      if (mode === "tracked-configured") {
+      if (mode.startsWith("tracked")) {
         git(["add", ".arashi/config.json"]);
         git([
           "-c",
@@ -148,7 +148,11 @@ test.each(["standalone", "configured", "tracked-configured"])(
         "add",
         "-b",
         "feature/matching",
-        join(repository, worktrees, "feature/matching"),
+        join(
+          repository,
+          worktrees,
+          mode === "tracked-repo-prefix" ? "workspace-feature/matching" : "feature/matching",
+        ),
       ]);
       process.chdir(reused);
       const result = await executeSwitch(

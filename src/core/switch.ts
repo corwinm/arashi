@@ -219,13 +219,17 @@ function worktreeNameMatchesBranch(
       namedPath = path.slice(0, -childPath.length - 1);
     }
   }
-  const namespace = (
-    options.repositories?.find((repo) => resolve(repo.path) === root)?.name ?? basename(root)
-  ).replace(/\.git$/i, "");
+  const primaryName = options.repositories?.find((repo) => resolve(repo.path) === root)?.name;
+  const namespaces = [basename(root), ...(primaryName ? [primaryName] : [])].map((name) =>
+    name.replace(/\.git$/i, ""),
+  );
   const base = resolve(options.worktreesBase ?? root);
   // Existing checkouts retain their names when naming policy or path budgets change.
   return [candidate.branchName, candidate.branchName.replaceAll("/", "-")].some((branch) =>
-    [branch, `${namespace}-${branch}`, `${namespace}/${branch}`].some((name) => {
+    [
+      branch,
+      ...namespaces.flatMap((namespace) => [`${namespace}-${branch}`, `${namespace}/${branch}`]),
+    ].some((name) => {
       const ordinaryPath = resolve(base, ...name.split("/"));
       if (namedPath === ordinaryPath) return true;
       // Validate the exact generated prefix AND hash using create's fitter. The

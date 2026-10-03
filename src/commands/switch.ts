@@ -503,7 +503,11 @@ async function executeSwitchSelected(
       ...repo,
       path: resolve(displayRoot, relative(workspaceRoot, repo.path)),
     })),
-    workspaceRepoName: scope === "all" ? basename(resolve(displayRoot)) : undefined,
+    workspaceRepoName:
+      scope === "all"
+        ? (workspace.repositories.find((repo) => resolve(repo.path) === resolve(workspaceRoot))
+            ?.name ?? basename(resolve(configurationRoot)))
+        : undefined,
   });
 
   if (t3Request) {
