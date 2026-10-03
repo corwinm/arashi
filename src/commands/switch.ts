@@ -16,12 +16,13 @@ import {
 } from "../lib/switch-t3-handoff.ts";
 import { runtime } from "../lib/runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
-import { basename, resolve, sep } from "path";
+import { basename, relative, resolve, sep } from "path";
 import {
   discoverSwitchCandidates,
   filterSwitchCandidates,
   selectSwitchCandidate,
 } from "../core/switch.ts";
+import type { SelectSwitchCandidateOptions } from "../core/switch.ts";
 import { ConfigError, findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import type { SwitchMode } from "../lib/config.ts";
 import { getDirectiveContext, writeCdDirective } from "../lib/shell-directives.ts";
@@ -159,7 +160,7 @@ export interface SwitchCommandDependencies {
   ) => Promise<SwitchCandidateDiscoveryResult>;
   selectSwitchCandidate?: (
     candidates: SwitchCandidate[],
-    options: { interactive: boolean; workspaceRepoName?: string },
+    options: SelectSwitchCandidateOptions,
   ) => Promise<SwitchCandidate>;
   augmentAllScopeCandidates?: (
     candidates: SwitchCandidate[],
@@ -489,6 +490,11 @@ async function executeSwitchSelected(
   );
   const selected = await chooseCandidate(matchedCandidates, {
     interactive,
+    displayRoot: configurationRoot,
+    repositories: workspace.repositories.map((repo) => ({
+      ...repo,
+      path: resolve(configurationRoot, relative(workspaceRoot, repo.path)),
+    })),
     workspaceRepoName: scope === "all" ? basename(resolve(workspaceRoot)) : undefined,
   });
 

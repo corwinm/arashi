@@ -1,5 +1,5 @@
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
-import { basename, resolve } from "path";
+import { basename, relative, resolve, sep } from "path";
 import type { WorkspaceRepository } from "../lib/config.ts";
 import type { WorktreeInfo } from "../types/remove.ts";
 import { discoverAllWorktrees } from "./remove.ts";
@@ -36,9 +36,12 @@ interface DiscoverSwitchCandidatesDependencies {
   discoverAllWorktrees?: (repositories: RepositoryTarget[]) => Promise<WorktreeInfo[]>;
 }
 
-interface SelectSwitchCandidateOptions {
+export interface SelectSwitchCandidateOptions {
   interactive: boolean;
   workspaceRepoName?: string;
+  /** Stable repository root, not the invocation directory or a linked checkout. */
+  displayRoot?: string;
+  repositories?: readonly WorkspaceRepository[];
 }
 
 interface SelectSwitchCandidateDependencies {
@@ -174,7 +177,7 @@ export async function selectSwitchCandidate(
 
     return left.worktreePath.localeCompare(right.worktreePath);
   });
-  const choiceNames = buildChoiceNames(sortedCandidates, normalizedWorkspaceRepoName);
+  const choiceNames = buildChoiceNames(sortedCandidates, options);
   const choices: Choice<SwitchCandidate>[] = sortedCandidates.map((candidate, index) => ({
     description: candidate.worktreePath,
     name: choiceNames[index],
@@ -192,20 +195,56 @@ export async function selectSwitchCandidate(
   return outcome.value;
 }
 
-function buildChoiceNames(candidates: SwitchCandidate[], workspaceRepoName?: string): string[] {
+function worktreeNameMatchesBranch(
+  candidate: SwitchCandidate,
+  options: SelectSwitchCandidateOptions,
+): boolean {
+  const root = resolve(options.displayRoot!);
+  const repository = options.repositories?.find((repo) => repo.name === candidate.repoName);
+  const path = resolve(candidate.worktreePath);
+  if (path === resolve(repository?.path ?? root)) return true;
+
+  // A coordinated child ends in its configured repository path, not its branch.
+  let namedPath = path;
+  if (repository) {
+    const childPath = relative(root, resolve(repository.path));
+    if (
+      childPath &&
+      !childPath.startsWith(`..${sep}`) &&
+      childPath !== ".." &&
+      path.endsWith(`${sep}${childPath}`)
+    ) {
+      namedPath = path.slice(0, -childPath.length - 1);
+    }
+  }
+  const namespace = basename(root).replace(/\.git$/i, "");
+  // Recognize both current and previously configured naming styles. Changing
+  // naming configuration does not rename existing worktrees.
+  return [candidate.branchName, candidate.branchName.replaceAll("/", "-")].some((branch) =>
+    [branch, `${namespace}-${branch}`].some((name) =>
+      namedPath.endsWith(`${sep}${name.split("/").join(sep)}`),
+    ),
+  );
+}
+
+function buildChoiceNames(
+  candidates: SwitchCandidate[],
+  options: SelectSwitchCandidateOptions,
+): string[] {
   const uniqueRepos = new Set(candidates.map((candidate) => candidate.repoName));
   const useRepoPrefix = uniqueRepos.size > 1;
-  const normalizedWorkspaceRepoName = workspaceRepoName?.trim();
+  const normalizedWorkspaceRepoName = options.workspaceRepoName?.trim();
+  const displayPath = (candidate: SwitchCandidate) =>
+    cleanDisplay(relative(options.displayRoot!, candidate.worktreePath) || ".");
   const baseNames = candidates.map((candidate) => {
-    if (!useRepoPrefix) {
-      return candidate.branchName;
-    }
-
-    if (normalizedWorkspaceRepoName && candidate.repoName === normalizedWorkspaceRepoName) {
-      return candidate.branchName;
-    }
-
-    return `${candidate.repoName} (${candidate.branchName})`;
+    const branch = cleanDisplay(candidate.branchName);
+    const label =
+      !useRepoPrefix || candidate.repoName === normalizedWorkspaceRepoName
+        ? branch
+        : `${cleanDisplay(candidate.repoName)} (${branch})`;
+    return options.displayRoot && !worktreeNameMatchesBranch(candidate, options)
+      ? `${label} - ${displayPath(candidate)}`
+      : label;
   });
 
   const nameCounts = new Map<string, number>();
@@ -219,6 +258,6 @@ function buildChoiceNames(candidates: SwitchCandidate[], workspaceRepoName?: str
       return baseName;
     }
 
-    return `${baseName} - ${basename(candidate.worktreePath)}`;
+    return `${baseName} - ${options.displayRoot ? displayPath(candidate) : cleanDisplay(basename(candidate.worktreePath))}`;
   });
 }
