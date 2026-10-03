@@ -188,7 +188,7 @@ describe("selectSwitchCandidate", () => {
     ["preserved slash branch", ".worktrees/feature/new", "feature/new", "feature/new"],
     ["flattened slash branch", ".worktrees/feature-new", "feature/new", "feature/new"],
     ["repo-branch naming", ".worktrees/workspace-feature/new", "feature/new", "feature/new"],
-    ["bare namespace", "workspace/feature/new", "feature/new", "feature/new"],
+    ["bare namespace", ".worktrees/workspace/feature/new", "feature/new", "feature/new"],
     [
       "partial slash match",
       ".worktrees/other/new",
@@ -196,6 +196,12 @@ describe("selectSwitchCandidate", () => {
       "feature/new - .worktrees/other/new",
     ],
     ["external checkout", "../review", "feature/new", "feature/new - ../review"],
+    [
+      "renamed slash suffix",
+      ".worktrees/review/feature/new",
+      "feature/new",
+      "feature/new - .worktrees/review/feature/new",
+    ],
     ["main checkout", ".", "main", "main"],
   ])("labels %s relative to the repository root", async (_case, path, branch, expected) => {
     const candidate = {
@@ -208,6 +214,7 @@ describe("selectSwitchCandidate", () => {
       {
         interactive: true,
         displayRoot: "/workspace",
+        worktreesBase: "/workspace/.worktrees",
         repositories: [{ name: "workspace", path: "/workspace" }],
       },
       {
@@ -240,6 +247,7 @@ describe("selectSwitchCandidate", () => {
         interactive: true,
         displayRoot: "/workspace",
         workspaceRepoName: "workspace",
+        worktreesBase: "/workspace/.arashi/worktrees",
         repositories: [
           { name: "workspace", path: "/workspace" },
           { name: "docs", path: "/workspace/projects/docs" },

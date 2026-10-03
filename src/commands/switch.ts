@@ -491,6 +491,9 @@ async function executeSwitchSelected(
   const selected = await chooseCandidate(matchedCandidates, {
     interactive,
     displayRoot: configurationRoot,
+    worktreesBase:
+      (context.mode === "unavailable" ? undefined : context.effective?.worktreesBase) ??
+      resolve(configurationRoot, workspace.config?.worktreesDir ?? ".arashi/worktrees"),
     repositories: workspace.repositories.map((repo) => ({
       ...repo,
       path: resolve(configurationRoot, relative(workspaceRoot, repo.path)),

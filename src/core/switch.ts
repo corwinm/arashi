@@ -41,6 +41,7 @@ export interface SelectSwitchCandidateOptions {
   workspaceRepoName?: string;
   /** Stable repository root, not the invocation directory or a linked checkout. */
   displayRoot?: string;
+  worktreesBase?: string;
   repositories?: readonly WorkspaceRepository[];
 }
 
@@ -221,8 +222,8 @@ function worktreeNameMatchesBranch(
   // Recognize both current and previously configured naming styles. Changing
   // naming configuration does not rename existing worktrees.
   return [candidate.branchName, candidate.branchName.replaceAll("/", "-")].some((branch) =>
-    [branch, `${namespace}-${branch}`].some((name) =>
-      namedPath.endsWith(`${sep}${name.split("/").join(sep)}`),
+    [branch, `${namespace}-${branch}`, `${namespace}/${branch}`].some(
+      (name) => namedPath === resolve(options.worktreesBase ?? root, ...name.split("/")),
     ),
   );
 }
