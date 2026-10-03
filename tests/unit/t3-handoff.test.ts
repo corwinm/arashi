@@ -450,7 +450,7 @@ describe("native T3 receipt protection", () => {
   test("fails closed on corrupt receipts and stale/concurrent locks", async () => {
     const fixture = await handoffFixture();
     const path = await t3ReceiptPath(fixture.input.workspacePath, fixture.input.dependencies);
-    await mkdir(join(path, ".."), { recursive: true });
+    await mkdir(join(path, ".."), { mode: 0o700, recursive: true });
     await writeFile(path, "{}");
     await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       code: "T3_RECEIPT_INVALID",
@@ -542,6 +542,7 @@ describe("native T3 receipt protection", () => {
     const fixture = await handoffFixture();
     const paths: string[] = [];
     fixture.input.dependencies.platform = "win32";
+    fixture.input.dependencies.assertWindowsOwnerOnly = async () => true;
     fixture.input.dependencies.setWindowsOwnerOnly = async (path) => {
       paths.push(path);
     };

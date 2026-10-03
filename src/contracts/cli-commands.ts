@@ -623,6 +623,30 @@ export const optionAuditPolicies: OptionAuditPolicies = {
     },
   },
   switch: {
+    "--t3": {
+      conflicts: [
+        "--cd",
+        "--launch",
+        "--no-cd",
+        "--tab",
+        "--tmux",
+        "--sesh",
+        "--herdr",
+        "--vscode",
+        "--cursor",
+        "--kiro",
+      ],
+      ownership: "command",
+      persisted: false,
+    },
+    "--prompt-file": { ownership: "command", persisted: false },
+    "--permission": { ownership: "command", persisted: false },
+    "--t3-base-dir": { ownership: "command", persisted: false },
+    "--t3-cli": { ownership: "command", persisted: false },
+    "--t3-provider": { ownership: "command", persisted: false },
+    "--t3-model": { ownership: "command", persisted: false },
+    "--t3-effort": { ownership: "command", persisted: false },
+    "--t3-intent": { ownership: "command", persisted: false },
     "--cd": {
       conflicts: [
         "--cursor",
@@ -684,6 +708,11 @@ export const optionAuditPolicies: OptionAuditPolicies = {
     "--vscode": launchClassPolicy(explicitLauncherConflicts("--vscode")),
   },
 };
+
+for (const flag of optionAuditPolicies.switch!["--t3"]!.conflicts ?? []) {
+  const policy = optionAuditPolicies.switch![flag]!;
+  policy.conflicts = [...(policy.conflicts ?? []), "--t3"];
+}
 
 const EXPLICIT_POLICY_KEYS = [
   "compatibleOptions",
@@ -1198,7 +1227,11 @@ export const commandSemantics: CommandSemantics = {
   status: standard({ support: "full" }, standalone()),
   switch: {
     ...standard(
-      unsupported("Switch launches a shell; --json only returns an unsupported-mode error."),
+      {
+        support: "conditional",
+        reason:
+          "Explicit --t3 supports one JSON handoff envelope; ordinary launch/CD retains the unsupported-mode guard. T3 launch conflicts are validated before selection.",
+      },
       standalone(),
     ),
     optionPolicies: {
@@ -2042,6 +2075,7 @@ const completionOptionKinds: Record<string, CompletionCandidateKind> = {
   "config effective:--switch-mode": "choice",
   "create:--conflict": "choice",
   "create:--permission": "choice",
+  "switch:--permission": "choice",
   "move:--from": "workspace",
   "move:--to": "workspace",
 };

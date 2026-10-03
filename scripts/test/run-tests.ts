@@ -59,6 +59,11 @@ function normalizeRelativePath(path: string): string {
 }
 
 function shouldSkipWindowsTest(relativePath: string): boolean {
+  // Dedicated T3 suites run on Linux/macOS, not Windows.
+  if (/\/(?:switch-)?t3[^/]*\.test\.ts$/u.test(relativePath)) {
+    return true;
+  }
+
   if (windowsExcludedTests.has(relativePath)) {
     return true;
   }

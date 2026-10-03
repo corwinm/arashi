@@ -526,7 +526,7 @@ describe("CLI command contract", () => {
         deprecatedAlternatives: true,
         removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
       },
-      conflicts: ["--cd"],
+      conflicts: ["--cd", "--t3"],
       implies: ["launch"],
       ownership: "command",
       persisted: false,
@@ -724,7 +724,7 @@ describe("CLI command contract", () => {
     } as const;
     for (const [name, conflicts] of Object.entries(expectedConflicts)) {
       expect(policyFor(name), `${name} must publish switch policy`).toMatchObject({
-        conflicts,
+        conflicts: [...conflicts, "--t3"],
         ownership: "command",
         persisted: false,
       });
@@ -991,8 +991,8 @@ describe("CLI command contract", () => {
     const options = contract.commands.flatMap((command) => command.options);
 
     expect(contract.commands).toHaveLength(31);
-    expect(options).toHaveLength(173);
-    expect(new Set(options.map((option) => option.long))).toHaveLength(75);
+    expect(options).toHaveLength(182);
+    expect(new Set(options.map((option) => option.long))).toHaveLength(76);
 
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(

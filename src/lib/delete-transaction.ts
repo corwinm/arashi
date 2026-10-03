@@ -130,7 +130,11 @@ export const windowsAclPowerShellEnvironment = (
   return env;
 };
 
-const execWindowsAclPowerShell = (script: string, path: string) =>
+const execWindowsAclPowerShell = (
+  script: string,
+  path: string,
+  inherited: NodeJS.ProcessEnv = process.env,
+) =>
   execFileAsync(
     "powershell.exe",
     [
@@ -140,7 +144,7 @@ const execWindowsAclPowerShell = (script: string, path: string) =>
       "-EncodedCommand",
       Buffer.from(script, "utf16le").toString("base64"),
     ],
-    { env: windowsAclPowerShellEnvironment(path) },
+    { env: windowsAclPowerShellEnvironment(path, inherited) },
   );
 
 export const parseWindowsOwnerOnlyAcl = (output: string): boolean => {
@@ -168,16 +172,21 @@ export const parseWindowsOwnerOnlyAcl = (output: string): boolean => {
   }
 };
 
+export const assertWindowsOwnerOnlyAcl = async (
+  path: string,
+  inherited: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> => {
+  try {
+    const { stdout } = await execWindowsAclPowerShell(windowsAclProbe, path, inherited);
+    return parseWindowsOwnerOnlyAcl(stdout);
+  } catch {
+    return false;
+  }
+};
+
 const defaultReceiptSafety: DeleteReceiptSafetyIO = {
   platform: process.platform,
-  assertWindowsOwnerOnly: async (path) => {
-    try {
-      const { stdout } = await execWindowsAclPowerShell(windowsAclProbe, path);
-      return parseWindowsOwnerOnlyAcl(stdout);
-    } catch {
-      return false;
-    }
-  },
+  assertWindowsOwnerOnly: assertWindowsOwnerOnlyAcl,
   setWindowsOwnerOnly: async (path) => {
     await execWindowsAclPowerShell(windowsAclSet, path);
   },

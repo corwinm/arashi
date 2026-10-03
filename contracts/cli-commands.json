@@ -3997,6 +3997,7 @@
             "--launch",
             "--no-cd",
             "--sesh",
+            "--t3",
             "--tab",
             "--tmux",
             "--vscode"
@@ -4019,7 +4020,8 @@
               "--sesh",
               "--tab",
               "--tmux",
-              "--vscode"
+              "--vscode",
+              "--t3"
             ],
             "implies": ["cd"],
             "ownership": "command",
@@ -4031,7 +4033,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode"],
+          "conflicts": ["--cd", "--herdr", "--kiro", "--sesh", "--t3", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--cursor",
           "description": "Open the selected worktree in Cursor",
@@ -4041,7 +4043,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode"],
+            "conflicts": ["--cd", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4065,7 +4067,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd", "--cursor", "--kiro", "--sesh", "--tmux", "--vscode"],
+          "conflicts": ["--cd", "--cursor", "--kiro", "--sesh", "--t3", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--herdr",
           "description": "Open or focus the selected worktree in Herdr",
@@ -4075,7 +4077,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd", "--cursor", "--kiro", "--sesh", "--tmux", "--vscode"],
+            "conflicts": ["--cd", "--cursor", "--kiro", "--sesh", "--tmux", "--vscode", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4151,7 +4153,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd", "--cursor", "--herdr", "--sesh", "--tmux", "--vscode"],
+          "conflicts": ["--cd", "--cursor", "--herdr", "--sesh", "--t3", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--kiro",
           "description": "Open the selected worktree in Kiro",
@@ -4161,7 +4163,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd", "--cursor", "--herdr", "--sesh", "--tmux", "--vscode"],
+            "conflicts": ["--cd", "--cursor", "--herdr", "--sesh", "--tmux", "--vscode", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4185,7 +4187,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd"],
+          "conflicts": ["--cd", "--t3"],
           "deprecated": false,
           "flags": "--launch",
           "description": "Launch the selected worktree while preserving a configured launcher",
@@ -4195,7 +4197,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd"],
+            "conflicts": ["--cd", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4237,7 +4239,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd"],
+          "conflicts": ["--cd", "--t3"],
           "deprecated": true,
           "flags": "--no-cd",
           "description": "Deprecated compatibility spelling for --launch",
@@ -4247,7 +4249,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd"],
+            "conflicts": ["--cd", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4334,6 +4336,46 @@
           "variadic": false
         },
         {
+          "candidateKind": "choice",
+          "choices": ["approval-required", "auto-accept-edits", "full-access"],
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--permission <mode>",
+          "description": "T3 permission: approval-required, auto-accept-edits, full-access (initial default)",
+          "hidden": false,
+          "long": "--permission",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--prompt-file <path>",
+          "description": "Read the exact UTF-8 task once from invocation CWD; requires --t3",
+          "hidden": false,
+          "long": "--prompt-file",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
           "conflicts": [],
           "deprecated": false,
           "flags": "--repos",
@@ -4349,7 +4391,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--tmux", "--vscode"],
+          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--t3", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--sesh",
           "description": "Use sesh in tmux mode",
@@ -4359,7 +4401,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--tmux", "--vscode"],
+            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--tmux", "--vscode", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4383,7 +4425,163 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd"],
+          "conflicts": [
+            "--cd",
+            "--cursor",
+            "--herdr",
+            "--kiro",
+            "--launch",
+            "--no-cd",
+            "--sesh",
+            "--tab",
+            "--tmux",
+            "--vscode"
+          ],
+          "deprecated": false,
+          "flags": "--t3 [task]",
+          "description": "Send one task to native T3 in the selected existing checkout; no UI opens",
+          "hidden": false,
+          "long": "--t3",
+          "required": false,
+          "optional": true,
+          "repeatable": false,
+          "semanticPolicy": {
+            "conflicts": [
+              "--cd",
+              "--launch",
+              "--no-cd",
+              "--tab",
+              "--tmux",
+              "--sesh",
+              "--herdr",
+              "--vscode",
+              "--cursor",
+              "--kiro"
+            ],
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "optional",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--t3-base-dir <path>",
+          "description": "Official local T3 data directory; requires --t3",
+          "hidden": false,
+          "long": "--t3-base-dir",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--t3-cli <path>",
+          "description": "Official T3 command name or absolute executable; requires --t3",
+          "hidden": false,
+          "long": "--t3-cli",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--t3-effort <effort>",
+          "description": "Supported native reasoning effort; requires --t3",
+          "hidden": false,
+          "long": "--t3-effort",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--t3-intent <id>",
+          "description": "Exact local intent (default); resolved followups use deliberate distinct IDs; requires --t3",
+          "hidden": false,
+          "long": "--t3-intent",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--t3-model <model>",
+          "description": "Supported native model slug or alias; requires --t3",
+          "hidden": false,
+          "long": "--t3-model",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--t3-provider <id>",
+          "description": "Supported native provider instance or unambiguous driver; requires --t3",
+          "hidden": false,
+          "long": "--t3-provider",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": ["--cd", "--t3"],
           "deprecated": false,
           "flags": "--tab",
           "description": "Opens the selected worktree in a tab and bypasses configured launch defaults",
@@ -4393,7 +4591,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd"],
+            "conflicts": ["--cd", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4417,7 +4615,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
+          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--t3", "--vscode"],
           "deprecated": false,
           "flags": "--tmux",
           "description": "Force launch in a new plain tmux window",
@@ -4427,7 +4625,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
+            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4451,7 +4649,7 @@
           "variadic": false
         },
         {
-          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--tmux"],
+          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--t3", "--tmux"],
           "deprecated": false,
           "flags": "--vscode",
           "description": "Open the selected worktree in VS Code",
@@ -4461,7 +4659,7 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicy": {
-            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--tmux"],
+            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--tmux", "--t3"],
             "implies": ["launch"],
             "ownership": "command",
             "persisted": false,
@@ -4503,7 +4701,7 @@
           "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
-          "description": "Return a structured unsupported-mode error instead of launching or switching",
+          "description": "Return one structured T3 outcome; ordinary launch/CD modes remain unsupported",
           "hidden": false,
           "long": "--json",
           "required": false,
@@ -4517,8 +4715,8 @@
       ],
       "semantics": {
         "json": {
-          "support": "unsupported",
-          "reason": "Switch launches a shell; --json only returns an unsupported-mode error."
+          "support": "conditional",
+          "reason": "Explicit --t3 supports one JSON handoff envelope; ordinary launch/CD retains the unsupported-mode guard. T3 launch conflicts are validated before selection."
         },
         "docs": {
           "expectation": "required"
