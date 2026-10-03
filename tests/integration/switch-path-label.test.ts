@@ -85,108 +85,140 @@ test.each(["branch", "repo-branch"] as const)(
     }
   },
 );
-test.each(["standalone", "configured", "tracked-configured", "tracked-repo-prefix"])(
-  "switch labels a reused checkout from a linked %s invocation",
-  async (mode) => {
-    const originalCwd = process.cwd();
-    const root = await realpath(await mkdtemp(join(tmpdir(), "switch-label-")));
-    const repository = join(root, "workspace");
-    const worktrees = mode === "standalone" ? ".worktrees" : ".arashi/worktrees";
-    const reused = join(repository, worktrees, "review");
-    const git = (args: string[], cwd = repository) =>
-      execFileSync("git", args, {
-        cwd,
-        env: {
-          ...process.env,
-          GIT_CONFIG_COUNT: "1",
-          GIT_CONFIG_KEY_0: "commit.gpgsign",
-          GIT_CONFIG_VALUE_0: "false",
-        },
-        stdio: "pipe",
-      });
-    try {
-      await mkdir(repository);
-      git(["init", "-b", "main"]);
+test.each([
+  "standalone",
+  "configured",
+  "tracked-configured",
+  "tracked-repo-prefix",
+  "tracked-external",
+])("switch labels a reused checkout from a linked %s invocation", async (mode) => {
+  const originalCwd = process.cwd();
+  const root = await realpath(await mkdtemp(join(tmpdir(), "switch-label-")));
+  const repository = join(root, "workspace");
+  const worktrees = mode === "standalone" ? ".worktrees" : ".arashi/worktrees";
+  const reused = join(repository, worktrees, "review");
+  const git = (args: string[], cwd = repository) =>
+    execFileSync("git", args, {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "commit.gpgsign",
+        GIT_CONFIG_VALUE_0: "false",
+      },
+      stdio: "pipe",
+    });
+  try {
+    await mkdir(repository);
+    git(["init", "-b", "main"]);
+    git([
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "base",
+    ]);
+    if (mode === "tracked-external") {
+      const external = join(root, "shared");
+      await mkdir(external);
+      git(["init", "-b", "main"], external);
+      git(
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "base",
+        ],
+        external,
+      );
+    }
+    if (mode !== "standalone") {
+      await mkdir(join(repository, ".arashi"));
+      await writeFile(
+        join(repository, ".arashi/config.json"),
+        JSON.stringify({
+          version: "1.0.0",
+          reposDir: "repos",
+          repos:
+            mode === "tracked-external"
+              ? { shared: { path: join(root, "shared"), defaultBranch: "main" } }
+              : {},
+          worktreesDir: worktrees,
+        }),
+      );
+    }
+    if (mode.startsWith("tracked")) {
+      git(["add", ".arashi/config.json"]);
       git([
         "-c",
         "user.name=Test",
         "-c",
         "user.email=test@example.com",
         "commit",
-        "--allow-empty",
         "-m",
-        "base",
+        "tracked config",
       ]);
-      if (mode !== "standalone") {
-        await mkdir(join(repository, ".arashi"));
-        await writeFile(
-          join(repository, ".arashi/config.json"),
-          JSON.stringify({
-            version: "1.0.0",
-            reposDir: "repos",
-            repos: {},
-            worktreesDir: worktrees,
-          }),
-        );
-      }
-      if (mode.startsWith("tracked")) {
-        git(["add", ".arashi/config.json"]);
-        git([
-          "-c",
-          "user.name=Test",
-          "-c",
-          "user.email=test@example.com",
-          "commit",
-          "-m",
-          "tracked config",
-        ]);
-      }
-      git(["worktree", "add", "-b", "review", reused]);
-      git(["switch", "-c", "feature/new"], reused);
-      git([
-        "worktree",
-        "add",
-        "-b",
-        "feature/matching",
-        join(
-          repository,
-          worktrees,
-          mode === "tracked-repo-prefix" ? "workspace-feature/matching" : "feature/matching",
-        ),
-      ]);
-      process.chdir(reused);
-      const result = await executeSwitch(
-        undefined,
-        {},
-        {
-          stdinIsTTY: true,
-          stdoutIsTTY: true,
-          selectSwitchCandidate: (candidates, options) =>
-            selectSwitchCandidate(candidates, options, {
-              selectPrompt: async (_message, choices) => {
-                expect(options.displayRoot).toBe(repository);
+    }
+    git(["worktree", "add", "-b", "review", reused]);
+    git(["switch", "-c", "feature/new"], reused);
+    git([
+      "worktree",
+      "add",
+      "-b",
+      "feature/matching",
+      join(
+        repository,
+        worktrees,
+        mode === "tracked-repo-prefix" ? "workspace-feature/matching" : "feature/matching",
+      ),
+    ]);
+    process.chdir(reused);
+    const result = await executeSwitch(
+      undefined,
+      mode === "tracked-external" ? { all: true } : {},
+      {
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        selectSwitchCandidate: (candidates, options) =>
+          selectSwitchCandidate(candidates, options, {
+            selectPrompt: async (_message, choices) => {
+              expect(options.displayRoot).toBe(repository);
+              if (mode === "tracked-external") {
+                expect(options.repositories?.find((repo) => repo.name === "shared")?.path).toBe(
+                  join(root, "shared"),
+                );
+                expect(choices.find((choice) => choice.value.repoName === "shared")?.name).toBe(
+                  "shared (main)",
+                );
+              } else
                 expect(choices.map((choice) => choice.name)).toEqual([
                   "feature/matching",
                   `feature/new - ${worktrees}/review`,
                   "main",
                 ]);
-                return {
-                  status: "ok",
-                  value: choices.find((choice) => choice.value.worktreePath === reused)!.value,
-                };
-              },
-            }),
-          launchSwitchTarget: async () => ({
-            mode: "fallback",
-            command: [],
-            disposition: "window",
+              return {
+                status: "ok",
+                value: choices.find((choice) => choice.value.worktreePath === reused)!.value,
+              };
+            },
           }),
-        },
-      );
-      expect(result.selected.worktreePath).toBe(reused);
-    } finally {
-      process.chdir(originalCwd);
-      await rm(root, { recursive: true, force: true });
-    }
-  },
-);
+        launchSwitchTarget: async () => ({
+          mode: "fallback",
+          command: [],
+          disposition: "window",
+        }),
+      },
+    );
+    expect(result.selected.worktreePath).toBe(reused);
+  } finally {
+    process.chdir(originalCwd);
+    await rm(root, { recursive: true, force: true });
+  }
+});

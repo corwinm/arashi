@@ -16,7 +16,7 @@ import {
 } from "../lib/switch-t3-handoff.ts";
 import { runtime } from "../lib/runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
-import { basename, relative, resolve, sep } from "path";
+import { basename, isAbsolute, relative, resolve, sep } from "path";
 import {
   discoverSwitchCandidates,
   filterSwitchCandidates,
@@ -499,10 +499,12 @@ async function executeSwitchSelected(
         workspace.config?.worktreesDir ??
         ".arashi/worktrees",
     ),
-    repositories: workspace.repositories.map((repo) => ({
-      ...repo,
-      path: resolve(displayRoot, relative(workspaceRoot, repo.path)),
-    })),
+    repositories: workspace.repositories.map((repo) => {
+      const localPath = relative(workspaceRoot, repo.path);
+      const external =
+        isAbsolute(localPath) || localPath === ".." || localPath.startsWith(`..${sep}`);
+      return { ...repo, path: external ? repo.path : resolve(displayRoot, localPath) };
+    }),
     workspaceRepoName:
       scope === "all"
         ? (workspace.repositories.find((repo) => resolve(repo.path) === resolve(workspaceRoot))
