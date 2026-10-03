@@ -178,6 +178,94 @@ describe("selectSwitchCandidate", () => {
     expect(seenChoiceNames).toEqual(["feature/a", "main", "docs (feature/a)"]);
   });
 
+  test.each([
+    [
+      "reused named worktree",
+      ".worktrees/review",
+      "feature/new",
+      "feature/new - .worktrees/review",
+    ],
+    ["preserved slash branch", ".worktrees/feature/new", "feature/new", "feature/new"],
+    ["flattened slash branch", ".worktrees/feature-new", "feature/new", "feature/new"],
+    ["repo-branch naming", ".worktrees/workspace-feature/new", "feature/new", "feature/new"],
+    ["bare namespace", ".worktrees/workspace/feature/new", "feature/new", "feature/new"],
+    [
+      "partial slash match",
+      ".worktrees/other/new",
+      "feature/new",
+      "feature/new - .worktrees/other/new",
+    ],
+    ["external checkout", "../review", "feature/new", "feature/new - ../review"],
+    [
+      "renamed slash suffix",
+      ".worktrees/review/feature/new",
+      "feature/new",
+      "feature/new - .worktrees/review/feature/new",
+    ],
+    ["main checkout", ".", "main", "main"],
+  ])("labels %s relative to the repository root", async (_case, path, branch, expected) => {
+    const candidate = {
+      branchName: branch,
+      repoName: "workspace",
+      worktreePath: resolve("/workspace", path),
+    };
+    const selected = await selectSwitchCandidate(
+      [candidate, second],
+      {
+        interactive: true,
+        displayRoot: "/workspace",
+        worktreesBase: "/workspace/.worktrees",
+        repositories: [{ name: "workspace", path: "/workspace" }],
+      },
+      {
+        selectPrompt: async (_message, choices) => {
+          expect(choices.find((choice) => choice.value === candidate)?.name).toBe(expected);
+          return { status: "ok", value: candidate };
+        },
+      },
+    );
+    expect(selected).toBe(candidate);
+  });
+
+  test("labels coordinated child checkouts using their enclosing worktree name", async () => {
+    const candidates = [
+      {
+        branchName: "feature/new",
+        repoName: "docs",
+        worktreePath: resolve("/workspace/.arashi/worktrees/review/projects/docs"),
+      },
+      {
+        branchName: "feature/new",
+        repoName: "docs",
+        worktreePath: resolve("/workspace/.arashi/worktrees/feature/new/projects/docs"),
+      },
+      { branchName: "main", repoName: "workspace", worktreePath: resolve("/workspace") },
+    ];
+    await selectSwitchCandidate(
+      candidates,
+      {
+        interactive: true,
+        displayRoot: "/workspace",
+        workspaceRepoName: "workspace",
+        worktreesBase: "/workspace/.arashi/worktrees",
+        repositories: [
+          { name: "workspace", path: "/workspace" },
+          { name: "docs", path: "/workspace/projects/docs" },
+        ],
+      },
+      {
+        selectPrompt: async (_message, choices) => {
+          expect(choices.map((choice) => choice.name)).toEqual([
+            "main",
+            "docs (feature/new)",
+            "docs (feature/new) - .arashi/worktrees/review/projects/docs",
+          ]);
+          return { status: "ok", value: candidates[0] };
+        },
+      },
+    );
+  });
+
   test("throws on ambiguous non-interactive selection", async () => {
     await expect(
       selectSwitchCandidate([first, second], { interactive: false }),

@@ -1267,7 +1267,7 @@ const truncatePortableNamespace = (namespace: string, maxLength: number): string
   return prefix.replace(/[/-]+$/u, "");
 };
 
-const fitConfiguredParentWorktreePath = ({
+export const fitConfiguredParentWorktreePath = ({
   destinations,
   maxPathLength,
   ordinaryParentWorktreePath,

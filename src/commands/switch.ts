@@ -16,12 +16,13 @@ import {
 } from "../lib/switch-t3-handoff.ts";
 import { runtime } from "../lib/runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
-import { basename, resolve, sep } from "path";
+import { basename, isAbsolute, relative, resolve, sep } from "path";
 import {
   discoverSwitchCandidates,
   filterSwitchCandidates,
   selectSwitchCandidate,
 } from "../core/switch.ts";
+import type { SelectSwitchCandidateOptions } from "../core/switch.ts";
 import { ConfigError, findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import type { SwitchMode } from "../lib/config.ts";
 import { getDirectiveContext, writeCdDirective } from "../lib/shell-directives.ts";
@@ -159,7 +160,7 @@ export interface SwitchCommandDependencies {
   ) => Promise<SwitchCandidateDiscoveryResult>;
   selectSwitchCandidate?: (
     candidates: SwitchCandidate[],
-    options: { interactive: boolean; workspaceRepoName?: string },
+    options: SelectSwitchCandidateOptions,
   ) => Promise<SwitchCandidate>;
   augmentAllScopeCandidates?: (
     candidates: SwitchCandidate[],
@@ -487,9 +488,28 @@ async function executeSwitchSelected(
     (deps.stdinIsTTY ?? process.stdin.isTTY) &&
     (deps.stdoutIsTTY ?? process.stdout.isTTY),
   );
+  const displayRoot =
+    (context.mode === "unavailable" ? undefined : context.effective?.mainRoot) ?? configurationRoot;
   const selected = await chooseCandidate(matchedCandidates, {
     interactive,
-    workspaceRepoName: scope === "all" ? basename(resolve(workspaceRoot)) : undefined,
+    displayRoot,
+    worktreesBase: resolve(
+      displayRoot,
+      (context.mode === "unavailable" ? undefined : context.config.worktreesDir) ??
+        workspace.config?.worktreesDir ??
+        ".arashi/worktrees",
+    ),
+    repositories: workspace.repositories.map((repo) => {
+      const localPath = relative(workspaceRoot, repo.path);
+      const external =
+        isAbsolute(localPath) || localPath === ".." || localPath.startsWith(`..${sep}`);
+      return { ...repo, path: external ? repo.path : resolve(displayRoot, localPath) };
+    }),
+    workspaceRepoName:
+      scope === "all"
+        ? (workspace.repositories.find((repo) => resolve(repo.path) === resolve(workspaceRoot))
+            ?.name ?? basename(resolve(configurationRoot)))
+        : undefined,
   });
 
   if (t3Request) {
