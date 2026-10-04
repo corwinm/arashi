@@ -739,6 +739,163 @@ describe("readiness tracked-primary effect boundary", () => {
   });
 });
 
+describe("specification corrections S1–S4", () => {
+  test.each([
+    ["implicit", "healthy"],
+    ["explicit", "healthy"],
+    ["implicit", "malformed"],
+    ["explicit", "malformed"],
+  ])("S1 stale unrelated registration: %s selected %s config", async (selection, kind) => {
+    const f = await contextFixture();
+    const stale = join(f.root, "missing-linked");
+    await git(["worktree", "add", "-b", "stale", stale], f.repo);
+    await rm(stale, { recursive: true });
+    await mkdir(join(f.repo, ".arashi"));
+    await writeFile(
+      join(f.repo, ".arashi/config.json"),
+      kind === "malformed" ? "{" : JSON.stringify(raw),
+    );
+    const before = await f.snapshot();
+    const options = selection === "explicit" ? { cwd: f.home, path: f.repo } : { cwd: f.repo };
+    if (kind === "malformed") {
+      await expect(context(options)).rejects.toBeInstanceOf(configModule.ConfigError);
+    } else {
+      await expect(context(options)).resolves.toMatchObject({
+        checkout: f.repo,
+        workspaceRoot: f.repo,
+      });
+    }
+    expect(await f.snapshot()).toEqual(before);
+  });
+
+  test("S1 implicit identity read failure is not global absence", async () => {
+    const f = await contextFixture();
+    await writeFile(join(f.repo, ".git/config"), "[broken\n");
+    await expect(context({ cwd: f.repo })).rejects.toThrow();
+  });
+
+  test.each(["malformed", "unreadable"])(
+    "S2 bare owner cannot hide %s linked authority",
+    async (kind) => {
+      const f = await contextFixture();
+      const bare = join(f.root, "bare.git");
+      await git(["clone", "--bare", f.repo, bare], f.root);
+      await mkdir(join(bare, ".arashi"));
+      await writeFile(join(bare, ".arashi/config.json"), JSON.stringify(raw));
+      const linked = join(f.root, "bare-linked");
+      await git(["worktree", "add", linked, "main"], bare);
+      await mkdir(join(linked, ".arashi"));
+      const path = join(linked, ".arashi/config.json");
+      await writeFile(path, kind === "malformed" ? "{" : JSON.stringify(raw));
+      if (kind === "unreadable") {
+        await chmod(path, 0);
+      }
+      const before = await stat(path);
+      try {
+        await expect(context({ cwd: linked })).rejects.toBeInstanceOf(configModule.ConfigError);
+        const after = await stat(path);
+        expect({ mode: after.mode, mtimeMs: after.mtimeMs, size: after.size }).toEqual({
+          mode: before.mode,
+          mtimeMs: before.mtimeMs,
+          size: before.size,
+        });
+      } finally {
+        if (kind === "unreadable") {
+          await chmod(path, 0o600);
+        }
+      }
+    },
+  );
+
+  test.each([
+    ["linked", "relative"],
+    ["linked", "absolute"],
+    ["child", "relative"],
+    ["child", "absolute"],
+  ])("S3 %s keeps primary-owned %s personal root", async (selection, kind) => {
+    const f = await contextFixture();
+    await mkdir(join(f.repo, ".arashi"));
+    await writeFile(join(f.repo, ".arashi/config.json"), JSON.stringify(raw));
+    await git(["add", ".arashi/config.json"], f.repo);
+    await git(["commit", "-m", "tracked owner"], f.repo);
+    const linked = join(f.root, "nested/linked");
+    await mkdir(join(f.root, "nested"));
+    await git(["worktree", "add", "-b", "linked", linked], f.repo);
+    const directory = kind === "relative" ? "../user-trees" : join(f.root, "personal-trees");
+    await mkdir(join(f.home, ".arashi"));
+    await writeFile(
+      join(f.home, ".arashi/config.json"),
+      JSON.stringify({ version: "1.0.0", worktreesDir: directory }),
+    );
+    let cwd = linked;
+    if (selection === "child") {
+      cwd = join(linked, "repos/child");
+      await mkdir(cwd, { recursive: true });
+      await git(["init", "-b", "main"], cwd);
+    }
+    const before = await f.snapshot();
+    const result = await context({ cwd });
+    const { resolveUserWorktreesBase } = await import("../../src/lib/user-config.ts");
+    expect(result.checkout).toBe(cwd);
+    expect(result.workspaceRoot).toBe(linked);
+    expect(result.roots?.repositoriesBase).toBe(join(linked, "repos"));
+    expect(result.roots?.worktreesBase).toBe(resolveUserWorktreesBase(f.repo, directory));
+    expect(await f.snapshot()).toEqual(before);
+  });
+
+  test.each(["cli", "workspace", "user"])(
+    "S4 %s absolute base overrides invalid unused environment",
+    async (layer) => {
+      const f = await contextFixture();
+      vi.stubEnv("T3CODE_HOME", "relative-environment");
+      if (layer !== "cli") {
+        const owner = layer === "workspace" ? f.repo : f.home;
+        await mkdir(join(owner, ".arashi"));
+        await writeFile(
+          join(owner, ".arashi/config.json"),
+          JSON.stringify({
+            ...(layer === "workspace" ? raw : { version: "1.0.0" }),
+            defaults: { t3: { baseDir: f.baseDir } },
+          }),
+        );
+      }
+      const before = await f.snapshot();
+      await expect(
+        context({ cwd: f.repo, explicitSettings: layer === "cli" ? { baseDir: f.baseDir } : {} }),
+      ).resolves.toMatchObject({
+        settings: { baseDir: f.baseDir },
+        sources: { baseDir: layer },
+      });
+      expect(await f.snapshot()).toEqual(before);
+    },
+  );
+
+  test("S4 invalid environment rejects when it wins", async () => {
+    const f = await contextFixture();
+    vi.stubEnv("T3CODE_HOME", "relative-environment");
+    await expect(context({ cwd: f.home })).rejects.toThrow(/absolute path/);
+  });
+
+  test.each(["workspace", "user"])(
+    "S4 invalid applicable %s rejects despite CLI override",
+    async (layer) => {
+      const f = await contextFixture();
+      const owner = layer === "workspace" ? f.repo : f.home;
+      await mkdir(join(owner, ".arashi"));
+      await writeFile(
+        join(owner, ".arashi/config.json"),
+        JSON.stringify({
+          ...(layer === "workspace" ? raw : { version: "1.0.0" }),
+          defaults: { t3: { baseDir: "relative-authored" } },
+        }),
+      );
+      await expect(
+        context({ cwd: f.repo, explicitSettings: { baseDir: f.baseDir } }),
+      ).rejects.toThrow();
+    },
+  );
+});
+
 describe("readiness exact whitespace paths", () => {
   test.each(["trailing space ", "embedded\nnewline"])(
     "preserves physical path %j",

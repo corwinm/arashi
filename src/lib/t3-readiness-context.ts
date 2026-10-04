@@ -1,5 +1,6 @@
 import { dirname, join, resolve } from "node:path";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
+import { ArashiError } from "./errors.ts";
 import { exec } from "./git.ts";
 import {
   getUserConfigPath,
@@ -42,32 +43,39 @@ async function physicalHome(): Promise<string> {
 
 async function discoverWorkspace(identity: CheckoutIdentity | null): Promise<{
   root: string;
+  mainRoot: string;
   loaded: DiagnosticLoadedConfig;
 } | null> {
   if (!identity) return null;
   const home = await physicalHome();
   const visited = new Set<string>();
   const identities = [identity];
-  async function localAncestors(start: string) {
+  async function localAncestors(start: string, owner = identity!) {
     let root = start;
     while (true) {
       if (root !== home && !visited.has(root)) {
         visited.add(root);
         const loaded = await readConfigForDiagnostics(root);
-        if (loaded) return { root, loaded };
+        if (loaded) {
+          const mainRoot =
+            root === owner.checkout || root === owner.primary
+              ? owner.primary
+              : ((await checkoutIdentity(root))?.primary ?? root);
+          return { loaded, mainRoot, root };
+        }
       }
       const parent = dirname(root);
       if (parent === root) return null;
       root = parent;
     }
   }
-  // Bare common roots own their linked checkouts' configuration.
+  // Validate applicable local authority before choosing a bare common owner.
+  const local = await localAncestors(identity.checkout);
   if (identity.primaryBare && identity.primary !== home) {
     const loaded = await readConfigForDiagnostics(identity.primary);
     visited.add(identity.primary);
-    if (loaded) return { root: identity.primary, loaded };
+    if (loaded) return { loaded, mainRoot: identity.primary, root: identity.primary };
   }
-  const local = await localAncestors(identity.checkout);
   if (local) return local;
   const primaryLocal = await localAncestors(identity.primary);
   if (primaryLocal) return primaryLocal;
@@ -86,7 +94,7 @@ async function discoverWorkspace(identity: CheckoutIdentity | null): Promise<{
       const parentIdentity = await checkoutIdentity(ancestor);
       if (parentIdentity && !identities.some((entry) => entry.primary === parentIdentity.primary)) {
         identities.push(parentIdentity);
-        const parentLocal = await localAncestors(parentIdentity.primary);
+        const parentLocal = await localAncestors(parentIdentity.primary, parentIdentity);
         if (parentLocal) return parentLocal;
       }
     }
@@ -101,13 +109,39 @@ async function discoverWorkspace(identity: CheckoutIdentity | null): Promise<{
       continue;
     }
     const loaded = await readConfigForDiagnostics(entry.primary, { bareRepoPath: entry.primary });
-    if (loaded) return { root: entry.primary, loaded };
+    if (loaded) return { loaded, mainRoot: entry.primary, root: entry.primary };
   }
   return null;
 }
 
 async function checkoutIdentity(path: string): Promise<CheckoutIdentity | null> {
-  const bare = await exec(["rev-parse", "--is-bare-repository"], path);
+  const bare = await exec(["rev-parse", "--is-bare-repository"], path).catch(
+    async (error: unknown) => {
+      if (!(error instanceof ArashiError) || error.code !== "NOT_A_REPOSITORY") {
+        throw error;
+      }
+      // Broken repository metadata is an identity failure, not global readiness.
+      let ancestor = path;
+      while (true) {
+        try {
+          await lstat(join(ancestor, ".git"));
+          throw error;
+        } catch (inspectionError) {
+          if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw inspectionError;
+          }
+        }
+        const parent = dirname(ancestor);
+        if (parent === ancestor) {
+          return null;
+        }
+        ancestor = parent;
+      }
+    },
+  );
+  if (!bare) {
+    return null;
+  }
   if (bare.stdout.trim() === "true") return null;
   const top = await exec(["rev-parse", "--show-toplevel"], path);
   const checkout = await realpath(gitLine(top.stdout));
@@ -118,14 +152,14 @@ async function checkoutIdentity(path: string): Promise<CheckoutIdentity | null> 
     .split("\0\0")
     .filter(Boolean)
     .map((record) => record.split("\0"));
-  const paths = await Promise.all(
-    records.map(async (record) => {
-      const entry = record.find((field) => field.startsWith("worktree "));
-      return entry ? realpath(entry.slice(9)) : null;
-    }),
+  const paths = records.map((record) =>
+    record.find((field) => field.startsWith("worktree "))?.slice(9),
   );
-  if (!paths.includes(checkout) || !paths[0]) throw new Error("Unregistered checkout");
-  return { checkout, primary: paths[0], primaryBare: records[0]!.includes("bare") };
+  // Git records physical checkout paths. Only the selected and primary roots
+  // Need to exist; unrelated stale registrations must not require repair.
+  if (!paths.some((entry) => entry !== undefined && resolve(entry) === checkout) || !paths[0])
+    throw new Error("Unregistered checkout");
+  return { checkout, primary: await realpath(paths[0]), primaryBare: records[0]!.includes("bare") };
 }
 
 /** Resolve diagnostic context without contacting the native application. */
@@ -145,9 +179,11 @@ export async function resolveT3ReadinessContext(options: {
     if (options.path !== undefined && (!identity || identity.checkout !== selected)) {
       throw new Error("Expected exact checkout");
     }
-  } catch {
-    if (options.path !== undefined)
-      throw new Error("Path must select a readable registered Git checkout");
+  } catch (error) {
+    if (options.path !== undefined) {
+      throw new Error("Path must select a readable registered Git checkout", { cause: error });
+    }
+    throw error;
   }
   const workspace = await discoverWorkspace(identity);
   const effective = workspace
@@ -156,7 +192,7 @@ export async function resolveT3ReadinessContext(options: {
           identity?.primaryBare && workspace.root === identity.primary
             ? ".."
             : DEFAULT_WORKTREES_DIR,
-        mainRoot: workspace.root,
+        mainRoot: workspace.mainRoot,
         workspaceRoot: workspace.root,
         workspaceConfig: workspace.loaded.config,
         workspaceConfigPath: workspace.loaded.configPath,
@@ -165,12 +201,17 @@ export async function resolveT3ReadinessContext(options: {
     : null;
   const user = effective ? effective.userConfig : (await loadUserConfig())?.config;
   const environmentBase = process.env.T3CODE_HOME;
+  const authoredBase =
+    options.explicitSettings.baseDir ??
+    workspace?.loaded.config.defaults?.t3?.baseDir ??
+    user?.defaults?.t3?.baseDir;
   const settings = mergeT3Settings(
     options.explicitSettings,
     mergeT3Settings(
       workspace?.loaded.config.defaults?.t3 ?? {},
       mergeT3Settings(user?.defaults?.t3 ?? {}, {
-        baseDir: environmentBase || join(dirname(dirname(getUserConfigPath())), ".t3"),
+        baseDir:
+          authoredBase ?? (environmentBase || join(dirname(dirname(getUserConfigPath())), ".t3")),
         cli: "t3",
       }),
     ),
