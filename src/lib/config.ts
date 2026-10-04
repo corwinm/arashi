@@ -16,7 +16,8 @@ import {
 } from "./worktree-location.ts";
 import { basename, dirname, join, resolve } from "path";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
-import { mkdir, realpath } from "fs/promises";
+import { lstat, mkdir, readFile, realpath } from "fs/promises";
+import { ArashiError } from "./errors.ts";
 import { warn } from "./logger.ts";
 import { isValidRequestedBaseBranch, normalizeLogicalBranchName } from "./git-branch-name.ts";
 import { normalizeMaterializationPath } from "./materialization.ts";
@@ -1630,6 +1631,118 @@ const parseAndValidateConfig = (text: string, configPath: string): Config => {
 const hasAuthoredWorktreesDir = (text: string): boolean => {
   const value = JSON.parse(text) as unknown;
   return isRecord(value) && ("worktreesDir" in value || "worktrees_dir" in value);
+};
+
+export interface DiagnosticLoadedConfig extends LoadedConfig {
+  diagnostics: (
+    | ConfigDiagnostic
+    | {
+        code: "LEGACY_CONFIG_VERSION";
+        message: string;
+      }
+  )[];
+}
+
+/**
+ * Read one applicable root without discovery, migration, or console output.
+ * Null means genuine absence. Tracked fallback is opt-in for a caller-selected
+ * repository; Git show reads blob content without checkout/content filters.
+ */
+export const readConfigForDiagnostics = async (
+  root: string,
+  options: { bareRepoPath?: string } = {},
+): Promise<DiagnosticLoadedConfig | null> => {
+  const localPath = getConfigPath(root);
+  let text: string;
+  let configPath = localPath;
+  let source: ConfigSourceType = "local-file";
+  let absent = false;
+  try {
+    await lstat(localPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new ConfigError("Failed to inspect applicable configuration");
+    }
+    // Inspect the directory entry separately so dangling parent links remain errors.
+    let parent;
+    try {
+      parent = await lstat(dirname(localPath));
+    } catch (parentError) {
+      if ((parentError as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new ConfigError("Failed to inspect applicable configuration");
+      }
+    }
+    if (parent?.isSymbolicLink()) {
+      try {
+        await realpath(dirname(localPath));
+      } catch {
+        throw new ConfigError("Failed to inspect applicable configuration");
+      }
+    }
+    absent = true;
+  }
+  if (absent) {
+    if (!options.bareRepoPath) return null;
+    configPath = `${options.bareRepoPath}:.arashi/config.json`;
+    source = "repository-content";
+    try {
+      text = await readTrackedFileFromDefaultBranch(options.bareRepoPath, ".arashi/config.json");
+    } catch (error) {
+      // Only a missing blob in an otherwise resolved branch is absence. All
+      // repository/ref/read failures remain errors; raw Git output stays private.
+      if (
+        error instanceof ArashiError &&
+        error.context.args[0] === "show" &&
+        /fatal: path '\.arashi\/config\.json' (does not exist in|exists on disk, but not in) /.test(
+          error.context.stderr,
+        )
+      )
+        return null;
+      throw new ConfigError("Failed to read tracked configuration");
+    }
+  } else {
+    try {
+      text = await readFile(localPath, "utf8");
+    } catch {
+      throw new ConfigError("Failed to read applicable configuration");
+    }
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new ConfigParseError(configPath, new Error("Invalid JSON"));
+  }
+  try {
+    const normalized = normalizeConfigInternal(data);
+    return {
+      config: normalized.config,
+      diagnostics: [
+        ...normalized.diagnostics,
+        ...(normalized.migratedFromVersion
+          ? [
+              {
+                code: "LEGACY_CONFIG_VERSION" as const,
+                message: "Legacy configuration version normalized in memory.",
+              },
+            ]
+          : []),
+      ],
+      configPath,
+      source,
+      authoredWorktreesDir: hasAuthoredWorktreesDir(text),
+    };
+  } catch (error) {
+    // Existing validators can include authored keys/values in error details.
+    // Preserve error categories while keeping those details out of diagnostics.
+    if (error instanceof UnsupportedConfigVersionError) {
+      throw new UnsupportedConfigVersionError("unsupported", CURRENT_CONFIG_VERSION);
+    }
+    if (error instanceof ConfigValidationError) {
+      throw new ConfigValidationError(["Applicable configuration is invalid"]);
+    }
+    throw new ConfigError("Failed to normalize applicable configuration");
+  }
 };
 
 /**
