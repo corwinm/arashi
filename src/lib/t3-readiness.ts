@@ -21,6 +21,8 @@ const reasons = {
   T3_SELECTION_INVALID: "selection_invalid",
   T3_CLI_VERIFIED: "cli_verified",
   T3_RUNTIME_VERIFIED: "runtime_verified",
+  T3_CAPABILITIES_MISSING: "public_capabilities_missing",
+  T3_CAPABILITIES_DEFERRED: "public_capabilities_deferred",
   T3_COMPATIBILITY_VERIFIED: "compatibility_verified",
   T3_CLI_NOT_FOUND: "cli_missing",
   T3_ENVIRONMENT_MISSING: "runtime_missing",
@@ -294,19 +296,46 @@ export async function collectT3ReadinessPreview(
     verifyT3Protocol(publicDescriptor);
     if (publicDescriptor.serverVersion !== result.facts.cliVersion) fail("T3_VERSION_MISMATCH");
     const environmentId = identifier(publicDescriptor.environmentId);
+    const platform = record(publicDescriptor.platform);
     if (
       !environmentId ||
-      record(publicDescriptor.platform).os !==
-        (process.platform === "win32" ? "windows" : process.platform)
+      platform.os !== (process.platform === "win32" ? "windows" : process.platform)
     )
       fail("T3_ENVIRONMENT_INVALID");
+    // Validate the advertised scalar, not equality with the local architecture.
+    if (typeof platform.arch !== "string" || !["arm64", "x64", "other"].includes(platform.arch)) {
+      fail("T3_RESPONSE_INVALID");
+    }
+    if (!Object.hasOwn(publicDescriptor, "capabilities")) {
+      fail("T3_CAPABILITIES_MISSING");
+    }
+    const advertised = publicDescriptor.capabilities;
+    if (!advertised || typeof advertised !== "object" || Array.isArray(advertised)) {
+      fail("T3_RESPONSE_INVALID");
+    }
+    const capabilities = record(advertised);
+    for (const key of ["repositoryIdentity", "connectionProbe"] as const) {
+      if (Object.hasOwn(capabilities, key) && typeof capabilities[key] !== "boolean") {
+        fail("T3_RESPONSE_INVALID");
+      }
+    }
+    // Official repositoryIdentity omission decodes to false; connectionProbe
+    // Is optional. Neither absence nor false proves support, but neither is a
+    // Malformed descriptor. Explicitly defer that evidence without probing or
+    // Requiring unrelated optional features (or inventing an auth capability).
+    const capabilitiesVerified =
+      capabilities.repositoryIdentity === true && capabilities.connectionProbe === true;
     result.facts = {
       ...result.facts,
       serverVersion: publicDescriptor.serverVersion,
       protocol: 1,
       environmentId,
     };
-    set("compatibility", "verified", "T3_COMPATIBILITY_VERIFIED");
+    set(
+      "compatibility",
+      capabilitiesVerified ? "verified" : "deferred",
+      capabilitiesVerified ? "T3_COMPATIBILITY_VERIFIED" : "T3_CAPABILITIES_DEFERRED",
+    );
     result.readiness = "preview_passed";
     result.exitCode = 0;
   } catch (error) {

@@ -279,7 +279,7 @@ describe("D1 preview child and bounded operations", () => {
       f.allowHttp("GET", "/.well-known/t3/environment");
       const r = await collectT3ReadinessPreview(
         { cwd: f.repo, context },
-        { readRuntime: f.dependencies.readRuntime, fetch: f.dependencies.fetch },
+        { readRuntime: f.dependencies.readRuntime, fetch: descriptorFetch(f) },
       );
       expect(r.readiness).toBe("preview_passed");
       expect((await f.effects()).find((e) => e.kind === "process")?.envKeys).not.toContain(
@@ -502,6 +502,7 @@ async function preview(
   f.allowHttp("GET", "/.well-known/t3/environment");
   const dependencies = {
     ...f.dependencies,
+    fetch: descriptorFetch(f),
     runProcess: (argv: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv }) =>
       f.dependencies.runProcess(argv, {
         ...options,
@@ -532,9 +533,130 @@ const descriptor = (extra: Record<string, unknown> = {}) => ({
   environmentId: "environment-1",
   serverVersion: "0.0.43",
   orchestrationProtocolVersion: 1,
-  platform: { os: process.platform },
+  label: "Owned fixture",
+  platform: {
+    arch: process.arch === "arm64" || process.arch === "x64" ? process.arch : "other",
+    os: process.platform === "win32" ? "windows" : process.platform,
+  },
+  capabilities: { connectionProbe: true, repositoryIdentity: true },
   ...extra,
 });
+
+// The retained foundation server predates descriptor capability coverage. Keep
+// Its transport/effect policy unchanged while supplying the official-shaped
+// Public payload for these collector tests; the default-boundary Bun probe
+// Separately exercises unadapted HTTP and process/runtime dependencies.
+function descriptorFetch(f: Awaited<ReturnType<typeof fixture>>): typeof fetch {
+  return async (input, init) => {
+    const response = await f.dependencies.fetch(input, init);
+    if (!response.ok) {
+      return response;
+    }
+    const { record } = await import("../../src/lib/t3-native.ts");
+    const body = record(await response.json());
+    return Response.json({
+      ...descriptor(),
+      ...body,
+      platform: { ...descriptor().platform, ...record(body.platform) },
+    });
+  };
+}
+
+describe("D1 public descriptor capabilities", () => {
+  test.each([
+    ["missing envelope", { capabilities: undefined }, "T3_CAPABILITIES_MISSING"],
+    ["array envelope", { capabilities: [] }, "T3_RESPONSE_INVALID"],
+    ["null envelope", { capabilities: null }, "T3_RESPONSE_INVALID"],
+    ["string envelope", { capabilities: "CANARY" }, "T3_RESPONSE_INVALID"],
+    [
+      "repositoryIdentity object",
+      { capabilities: { connectionProbe: true, repositoryIdentity: { invalid: "CANARY" } } },
+      "T3_RESPONSE_INVALID",
+    ],
+    [
+      "repositoryIdentity string",
+      { capabilities: { connectionProbe: true, repositoryIdentity: "true" } },
+      "T3_RESPONSE_INVALID",
+    ],
+    [
+      "connectionProbe string",
+      { capabilities: { connectionProbe: "CANARY", repositoryIdentity: true } },
+      "T3_RESPONSE_INVALID",
+    ],
+    [
+      "connectionProbe null",
+      { capabilities: { connectionProbe: null, repositoryIdentity: true } },
+      "T3_RESPONSE_INVALID",
+    ],
+    ["arch array", { platform: { ...descriptor().platform, arch: [] } }, "T3_RESPONSE_INVALID"],
+  ])("fails closed for %s", async (_name, extra, code) => {
+    const f = await fixture();
+    const r = await preview(f, { fetch: async () => Response.json(descriptor(extra)) });
+    expect(r.readiness).toBe("blocked");
+    expect(r.exitCode).toBe(1);
+    expect(stage(r, "compatibility")).toMatchObject({ code, state: "failed" });
+    expect(r.findings).toEqual([
+      {
+        code,
+        reason:
+          code === "T3_CAPABILITIES_MISSING" ? "public_capabilities_missing" : "descriptor_invalid",
+        severity: "error",
+      },
+    ]);
+    expect(stage(r, "cli").state).toBe("verified");
+    expect(stage(r, "runtime").state).toBe("verified");
+    expect(r.cleanup).toEqual({ state: "not_attempted" });
+    expect(await f.activeSessions()).toEqual([]);
+    expect(JSON.stringify(r)).not.toContain("CANARY");
+  });
+  test.each([
+    ["repositoryIdentity missing (official default false)", { connectionProbe: true }],
+    ["repositoryIdentity false", { connectionProbe: true, repositoryIdentity: false }],
+    ["connectionProbe missing (official optional)", { repositoryIdentity: true }],
+    ["connectionProbe false", { connectionProbe: false, repositoryIdentity: true }],
+    ["both unsupported", { connectionProbe: false, repositoryIdentity: false }],
+  ])(
+    "explicitly defers %s without requiring all capabilities true",
+    async (_name, capabilities) => {
+      const f = await fixture();
+      const r = await preview(f, {
+        fetch: async () => Response.json(descriptor({ capabilities })),
+      });
+      expect(r.readiness).toBe("preview_passed");
+      expect(r.exitCode).toBe(0);
+      expect(r.findings).toEqual([]);
+      expect(stage(r, "compatibility")).toMatchObject({
+        code: "T3_CAPABILITIES_DEFERRED",
+        reason: "public_capabilities_deferred",
+        state: "deferred",
+      });
+      expect(stage(r, "authentication").state).toBe("deferred");
+      expect(r.cleanup).toEqual({ state: "not_attempted" });
+    },
+  );
+  test.each([
+    ["minimal official capabilities", descriptor()],
+    [
+      "unrelated optional feature false",
+      descriptor({ capabilities: { ...descriptor().capabilities, attachmentUploads: false } }),
+    ],
+    [
+      "other supported architecture without host matching",
+      descriptor({ platform: { ...descriptor().platform, arch: "other" } }),
+    ],
+  ])("retains verified control: %s", async (_name, value) => {
+    const f = await fixture();
+    const r = await preview(f, { fetch: async () => Response.json(value) });
+    expect(r.readiness).toBe("preview_passed");
+    expect(r.exitCode).toBe(0);
+    expect(r.findings).toEqual([]);
+    expect(stage(r, "compatibility")).toMatchObject({
+      code: "T3_COMPATIBILITY_VERIFIED",
+      state: "verified",
+    });
+  });
+});
+
 describe("D1 bounded preview A06–A09", () => {
   test("A06 preview effect allowlist and immutable state with explicit deferral", async () => {
     const f = await fixture();
