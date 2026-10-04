@@ -454,10 +454,11 @@ export async function readT3CliVersion(
   cli: string,
   cwd: string,
   dependencies: T3NativeDependencies = {},
+  childEnvironment: NodeJS.ProcessEnv = {},
 ): Promise<string> {
   const version = await (dependencies.runProcess ?? runProcess)([cli, "--version"], {
     cwd,
-    env: nativeChildEnvironment(),
+    env: nativeChildEnvironment(childEnvironment),
   });
   if (version.exitCode !== 0)
     return fail(
