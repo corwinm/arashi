@@ -6,6 +6,9 @@ import * as native from "../../src/lib/t3-native.ts";
 import { T3HandoffError } from "../../src/lib/t3-error.ts";
 import { nativeEnvironment } from "../helpers/t3-native.ts";
 
+import * as readiness from "../../src/lib/t3-readiness.ts";
+import { createReadinessFixture } from "../helpers/t3-readiness-fixture.ts";
+
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -421,4 +424,376 @@ describe("owned session foundation", () => {
       );
     }
   });
+});
+
+// Opt-in unchanged owned acquisition/read path: behavioral RED, not missing API RED.
+const readFoundation = async (
+  preview: readiness.T3ReadinessPreview,
+  authenticated: boolean,
+  f: Awaited<ReturnType<typeof createReadinessFixture>>,
+) => {
+  if (process.env.ARASHI_READ_LEGACY_RED === "1")
+    return native.withOwnedT3Session(
+      { baseDir: f.baseDir, cli: f.cli, origin: f.origin },
+      preview.stages.find((s) => s.name === "project")?.state === "not_applicable"
+        ? f.root
+        : f.repo,
+      {},
+      async (request, token) => {
+        await native.readT3Config(f.origin, token, request);
+        await request("/api/auth/session");
+        return {
+          authentication: "verified",
+          catalog: "read",
+          project: "deferred",
+          effectiveSelection: "deferred",
+          authority: "administrative",
+        };
+      },
+    );
+  return readiness.collectT3AuthenticatedReadFoundation(preview, { authenticated });
+};
+const authDescriptor = () => ({
+  policy: "loopback-browser",
+  bootstrapMethods: ["one-time-token"],
+  sessionMethods: ["bearer-access-token"],
+  sessionCookieName: "fixture-cookie",
+});
+const readShape = () => {
+  const descriptor = {
+    environmentId: "environment-1",
+    serverVersion: "0.0.43",
+    orchestrationProtocolVersion: 1,
+    platform: { os: process.platform, arch: process.arch },
+    capabilities: { repositoryIdentity: true, connectionProbe: true },
+  };
+  return {
+    descriptor,
+    session: {
+      authenticated: true,
+      auth: authDescriptor(),
+      scopes: [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ],
+      sessionMethod: "bearer-access-token",
+      expiresAt: "2026-10-04T12:00:00.000Z",
+    },
+    catalog: { environment: descriptor, auth: authDescriptor(), providers: [], settings: {} },
+    shell: {
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  };
+};
+async function readCase(
+  checkout: boolean,
+  run: (
+    f: Awaited<ReturnType<typeof createReadinessFixture>>,
+    p: readiness.T3ReadinessPreview,
+    shape: ReturnType<typeof readShape>,
+  ) => Promise<void>,
+) {
+  const f = await createReadinessFixture();
+  const saved = process.env;
+  process.env = {
+    ...f.env,
+    T3CODE_HOME: f.baseDir,
+    ARASHI_DIRECTIVE_FILE: "PRIVATE_DIRECTIVE",
+    ...(saved.ARASHI_READ_LEGACY_RED
+      ? { ARASHI_READ_LEGACY_RED: saved.ARASHI_READ_LEGACY_RED }
+      : {}),
+  };
+  try {
+    const childEnv = native.nativeChildEnvironment({ T3CODE_HOME: f.baseDir });
+    const cwd = checkout ? f.repo : f.root;
+    f.allowProcess(f.versionArgv, cwd, childEnv);
+    f.allowProcess(
+      f.issueArgv.map((a) => (a === "Arashi handoff" ? "Arashi readiness" : a)),
+      cwd,
+      childEnv,
+    );
+    f.allowProcess(
+      [f.cli, "auth", "session", "revoke", "fixture-session-1", "--base-dir", f.baseDir],
+      cwd,
+      childEnv,
+    );
+    f.allowProcess(
+      [f.cli, "auth", "session", "list", "--base-dir", f.baseDir, "--json"],
+      cwd,
+      childEnv,
+    );
+    f.allowHttp("GET", "/.well-known/t3/environment");
+    f.allowHttp("GET", "/api/auth/session");
+    f.allowHttp("POST", "/api/auth/websocket-ticket");
+    if (checkout) f.allowHttp("GET", "/api/orchestration/shell");
+    f.allowWs("server.getConfig");
+    f.allowWs("Pong");
+    const shape = readShape();
+    await f.configureReadFoundation(shape);
+    const context = {
+      checkout: checkout ? f.repo : null,
+      settings: { baseDir: f.baseDir, cli: f.cli },
+      workspaceRoot: null,
+      workspace: null,
+      roots: null,
+      sources: {},
+    };
+    const p = await readiness.collectT3ReadinessPreview({ cwd: f.root, context });
+    expect(p.readiness).toBe("preview_passed");
+    // Caller mutation after preview is deliberately not acquisition authority.
+    context.settings.cli = "PRIVATE_alternative";
+    context.settings.baseDir = f.root;
+    context.checkout = f.root;
+    p.facts.environmentId = "PRIVATE_public";
+    await run(f, p, shape);
+    await f.waitForSocketsClosed();
+    expect(await f.activeSessions()).toEqual([]);
+    const effects = await f.effects();
+    expect(effects.filter((e) => e.kind === "denied")).toEqual([]);
+    if (saved.D1_AUTH_READ_EVIDENCE) {
+      const { appendFile } = await import("node:fs/promises");
+      await appendFile(
+        join(saved.D1_AUTH_READ_EVIDENCE, "screened-ledgers.jsonl"),
+        JSON.stringify({
+          case: expect.getState().currentTestName,
+          runtime: { node: process.versions.node, executable: process.execPath },
+          checkout,
+          events: effects.map((e) => ({
+            kind: e.kind,
+            operation: e.argv ? (e.argv[1] === "--version" ? "version" : e.argv[3]) : undefined,
+            method: e.method,
+            path: e.kind === "http" ? e.path : undefined,
+            body: e.body,
+            tag: e.tag,
+            action: e.action,
+            directiveAbsent: e.envKeys ? !e.envKeys.includes("ARASHI_DIRECTIVE_FILE") : undefined,
+            cwdBound: e.cwd ? e.cwd === cwd : undefined,
+          })),
+          remainingSessions: 0,
+        }) + "\n",
+      );
+    }
+  } finally {
+    process.env = saved;
+    await f.dispose();
+  }
+}
+describe("Task4.4 authenticated read foundation", () => {
+  test("separate API setup", () => {
+    expect(readiness.collectT3AuthenticatedReadFoundation).toBeTypeOf("function");
+  });
+  test.each([false, true])("A11 actual task-free acquisition checkout=%s", async (checkout) =>
+    readCase(checkout, async (f, p) => {
+      const r = await readFoundation(p, true, f);
+      expect(r.use).toEqual({
+        status: "succeeded",
+        value: {
+          authentication: "verified",
+          catalog: "read",
+          project: checkout ? "deferred" : "not_applicable",
+          effectiveSelection: "deferred",
+          authority: "administrative",
+        },
+      });
+      expect(r.cleanup).toEqual({ status: "verified", revoke: "succeeded" });
+      const e = await f.effects();
+      expect(e.filter((x) => x.kind === "http").map((x) => [x.method, x.path, x.body])).toEqual([
+        ["GET", "/.well-known/t3/environment", "absent"],
+        ["GET", "/.well-known/t3/environment", "absent"],
+        ["GET", "/api/auth/session", "absent"],
+        ["POST", "/api/auth/websocket-ticket", "empty-object"],
+        ...(checkout ? [["GET", "/api/orchestration/shell", "absent"]] : []),
+      ]);
+      expect(
+        e
+          .filter((x) => x.kind === "process")
+          .map((x) => (x.argv![1] === "--version" ? "version" : x.argv![3])),
+      ).toEqual(["version", "version", "issue", "revoke", "list"]);
+      expect(e.findIndex((x) => x.kind === "socket" && x.action === "close")).toBeLessThan(
+        e.findIndex((x) => x.kind === "session" && x.action === "revoke"),
+      );
+      expect(e.filter((x) => x.kind === "ws").map((x) => x.tag)).toEqual([
+        "server.getConfig",
+        "Pong",
+      ]);
+      expect(JSON.stringify(r)).not.toMatch(/environment-1|fixture-cookie|127\.0\.0\.1|PRIVATE/);
+    }),
+  );
+  test.each(["CLI", "server", "environment", "consent", "copy"])(
+    "A10 issuance gate %s",
+    async (kind) =>
+      readCase(true, async (f, p, shape) => {
+        if (kind === "CLI")
+          await writeFile(
+            f.cli,
+            (await readFile(f.cli, "utf8")).replace("t3 v0.0.43", "t3 v0.0.45"),
+          );
+        if (kind === "server")
+          await f.configureReadFoundation({
+            ...shape,
+            descriptor: { ...shape.descriptor, serverVersion: "0.0.45" },
+          });
+        if (kind === "environment")
+          await f.configureReadFoundation({
+            ...shape,
+            descriptor: { ...shape.descriptor, environmentId: "other-environment" },
+          });
+        await expect(
+          readFoundation(kind === "copy" ? structuredClone(p) : p, kind !== "consent", f),
+        ).rejects.toMatchObject({
+          code:
+            kind === "consent"
+              ? "T3_AUTHENTICATED_REQUIRED"
+              : kind === "copy"
+                ? "T3_PREVIEW_REQUIRED"
+                : "T3_IDENTITY_CHANGED",
+        });
+        expect((await f.effects()).filter((e) => e.kind === "session")).toEqual([]);
+      }),
+  );
+  test.each([
+    ["unauthenticated", { authenticated: false }],
+    ["array authenticated", { authenticated: [true] }],
+    ["missing scopes", { scopes: undefined }],
+    ["missing read", { scopes: ["orchestration:operate"] }],
+    ["scalar scopes", { scopes: "orchestration:read" }],
+    ["scope object", { scopes: [{}] }],
+    ["unknown scope", { scopes: ["orchestration:read", "invented"] }],
+    ["method mismatch", { sessionMethod: "browser-session-cookie" }],
+    ["array method", { sessionMethod: ["bearer-access-token"] }],
+    ["missing auth", { auth: undefined }],
+    ["auth shape", { auth: [] }],
+    ["invalid expiry", { expiresAt: {} }],
+  ])("A12 session %s blocks before catalog", async (_name, change) =>
+    readCase(true, async (f, p, shape) => {
+      await f.configureReadFoundation({ ...shape, session: { ...shape.session, ...change } });
+      const r = await readFoundation(p, true, f);
+      expect(r.use.status).toBe("failed");
+      expect(r.failure?.code).toBe("T3_AUTH_FAILED");
+      expect(r.cleanup.status).toBe("verified");
+      expect((await f.effects()).filter((e) => e.kind === "http").map((e) => e.path)).toEqual([
+        "/.well-known/t3/environment",
+        "/.well-known/t3/environment",
+        "/api/auth/session",
+      ]);
+    }),
+  );
+  test.each(["read-only scope", "optional expiry absent"])("A12 supported %s", async (kind) =>
+    readCase(true, async (f, p, shape) => {
+      const session: Record<string, unknown> = { ...shape.session };
+      if (kind === "read-only scope") session.scopes = ["orchestration:read"];
+      else delete session.expiresAt;
+      await f.configureReadFoundation({ ...shape, session });
+      expect((await readFoundation(p, true, f)).use.status).toBe("succeeded");
+    }),
+  );
+  test.each(["bad policy", "bad bootstrap", "bad session methods", "bad cookie", "missing method"])(
+    "A12 descriptor identity %s",
+    async (kind) =>
+      readCase(true, async (f, p, shape) => {
+        const session: Record<string, unknown> = {
+          ...shape.session,
+          auth: {
+            ...shape.session.auth,
+            ...(kind === "bad policy"
+              ? { policy: [] }
+              : kind === "bad bootstrap"
+                ? { bootstrapMethods: [{}] }
+                : kind === "bad session methods"
+                  ? { sessionMethods: "bearer-access-token" }
+                  : kind === "bad cookie"
+                    ? { sessionCookieName: [] }
+                    : {}),
+          },
+        };
+        if (kind === "missing method") delete session.sessionMethod;
+        await f.configureReadFoundation({ ...shape, session });
+        const r = await readFoundation(p, true, f);
+        expect(r.use.status).toBe("failed");
+        expect(r.failure?.code).toBe("T3_AUTH_FAILED");
+        expect(r.cleanup.status).toBe("verified");
+        expect((await f.effects()).filter((e) => e.kind === "ws")).toEqual([]);
+      }),
+  );
+  test.each(["revoke failure", "list unknown"])(
+    "A15 authenticated success independent of %s",
+    async (kind) =>
+      readCase(true, async (f, p) => {
+        f.allowRead(f.runtimePath);
+        const r = await readiness.collectT3AuthenticatedReadFoundation(
+          p,
+          { authenticated: true },
+          {
+            ...f.dependencies,
+            runProcess: async (argv, options) => {
+              const out = await f.dependencies.runProcess(argv, options);
+              if (kind === "revoke failure" && argv[3] === "revoke") return { ...out, exitCode: 1 };
+              if (kind === "list unknown" && argv[3] === "list") return { ...out, stdout: "{" };
+              return out;
+            },
+          },
+        );
+        expect(r.use.status).toBe("succeeded");
+        expect(r.cleanup.status).toBe(kind === "revoke failure" ? "failed" : "unknown");
+      }),
+  );
+  test.each(["ticket", "config malformed", "shell project identity", "shell thread identity"])(
+    "A14 additional bounded read %s",
+    async (kind) =>
+      readCase(true, async (f, p, shape) => {
+        await f.configureReadFoundation({
+          ...shape,
+          ...(kind === "ticket"
+            ? { ticket: [] }
+            : kind === "config malformed"
+              ? { catalog: [] }
+              : kind === "shell project identity"
+                ? { shell: { ...shape.shell, projects: [{ id: [], workspaceRoot: "private" }] } }
+                : { shell: { ...shape.shell, threads: [{ id: "thread-1", projectId: [] }] } }),
+        });
+        const r = await readFoundation(p, true, f);
+        expect(r.use.status).toBe("failed");
+        expect(r.cleanup.status).toBe("verified");
+      }),
+  );
+  test.each(["config identity", "shell failure", "shell schema", "close", "oversize", "wrong-id"])(
+    "A14 bounded read %s enters exact cleanup",
+    async (kind) =>
+      readCase(true, async (f, p, shape) => {
+        await f.configureReadFoundation({
+          ...shape,
+          ...(kind === "config identity"
+            ? {
+                catalog: {
+                  ...shape.catalog,
+                  environment: { ...shape.descriptor, environmentId: "other-environment" },
+                },
+              }
+            : kind === "shell failure"
+              ? { shellStatus: 500 }
+              : kind === "shell schema"
+                ? { shell: { ...shape.shell, projects: {} } }
+                : { ws: kind }),
+        });
+        const r = await readFoundation(p, true, f);
+        expect(r.use.status).toBe("failed");
+        expect(r.cleanup.status).toBe("verified");
+        expect(
+          (await f.effects())
+            .filter((e) => e.kind === "process")
+            .map((e) => e.argv![3])
+            .slice(-3),
+        ).toEqual(["issue", "revoke", "list"]);
+        expect(JSON.stringify(r)).not.toMatch(/other-environment|127\.0\.0\.1/);
+      }),
+  );
 });

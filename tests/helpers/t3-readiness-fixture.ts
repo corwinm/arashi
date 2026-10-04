@@ -78,7 +78,12 @@ const server = Bun.serve({hostname:'127.0.0.1',port:0,
     if (url.pathname === '/.well-known/t3/environment' && request.headers.has('authorization')) return denied('public-auth');
     log({kind:'http',method:request.method,path:url.pathname,body:body ? 'empty-object' : 'absent'});
     if (url.pathname === '/redirect') return new Response(null,{status:302,headers:{location:'/forbidden'}});
+    const foundation = (() => {try {return load('read-foundation.json');} catch {return null;}})();
+    if (foundation && url.pathname === '/.well-known/t3/environment') return Response.json(foundation.descriptor);
+    if (foundation && url.pathname === '/api/auth/session') return Response.json(foundation.session);
+    if (foundation && url.pathname === '/api/orchestration/shell') return Response.json(foundation.shell, {status:foundation.shellStatus ?? 200});
     if (url.pathname === '/.well-known/t3/environment') return Response.json({environmentId:'environment-1',serverVersion:'0.0.43',orchestrationProtocolVersion:1,platform:{os:process.platform}});
+    if (foundation && url.pathname === '/api/auth/websocket-ticket' && Object.hasOwn(foundation,'ticket')) return Response.json({ticket:foundation.ticket});
     if (url.pathname === '/api/auth/websocket-ticket') return Response.json({ticket:sessions().find(s => request.headers.get('authorization') === 'Bearer ' + s.token).ticket});
     if (url.pathname === '/api/auth/session') return Response.json({authenticated:true,scopes:['orchestration:read','orchestration:operate']});
     if (url.pathname === '/api/orchestration/shell') return Response.json({snapshotSequence:0,projects:[],threads:[],updatedAt:'2026-01-01T00:00:00.000Z'});
@@ -96,6 +101,11 @@ const server = Bun.serve({hostname:'127.0.0.1',port:0,
           log({kind:'denied',boundary:'ws'}); ws.close(1008,'denied'); return;
         }
         log({kind:'ws',tag:message.tag});
+        const foundation = (() => {try {return load('read-foundation.json');} catch {return null;}})();
+        if (foundation?.ws === 'close') {ws.close();return;}
+        if (foundation?.ws === 'oversize') {ws.send(JSON.stringify({_tag:'Exit',requestId:message.id,exit:{_tag:'Success',value:{...load('catalog.json'),padding:'x'.repeat(1024*1024+1)}}}));return;}
+        if (foundation?.ws === 'wrong-id') {ws.send(JSON.stringify({_tag:'Exit',requestId:['1'],exit:{_tag:'Success',value:load('catalog.json')}}));return;}
+        if (foundation) ws.send(JSON.stringify({_tag:'Ping'}));
         ws.send(JSON.stringify({_tag:'Exit',requestId:message.id,exit:{_tag:'Success',value:load('catalog.json')}}));
       } catch {log({kind:'denied',boundary:'ws'});ws.close(1008,'denied');}
     }
@@ -426,6 +436,22 @@ export async function createReadinessFixture() {
       await writeFile(join(repo, "process.txt"), "PROCESS input\n");
     };
     return {
+      async configureReadFoundation(value: {
+        descriptor: object;
+        session: object;
+        shell: object;
+        catalog: object;
+        ws?: string;
+        shellStatus?: number;
+        ticket?: unknown;
+      }) {
+        await writeFile(join(control, "read-foundation.json"), JSON.stringify(value), {
+          mode: 0o600,
+        });
+        await writeFile(join(control, "catalog.json"), JSON.stringify(value.catalog), {
+          mode: 0o600,
+        });
+      },
       async activeSessions(): Promise<string[]> {
         return JSON.parse(await readFile(join(control, "sessions.json"), "utf8")).map(
           (s: { sessionId: string }) => s.sessionId,

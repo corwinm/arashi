@@ -208,6 +208,7 @@ export async function readT3Config(
   origin: string,
   token: string,
   request: ReturnType<typeof t3Http>,
+  options: { boundedRead?: boolean } = {},
 ): Promise<JsonObject> {
   const ticket = await request("/api/auth/websocket-ticket", {});
   if (!identifier(ticket.ticket))
@@ -219,11 +220,13 @@ export async function readT3Config(
   return new Promise((resolveConfig, reject) => {
     const socket = new WebSocket(url);
     let settled = false;
-    const finish = (value?: JsonObject) => {
+    let closing = false;
+    let pending: JsonObject | undefined;
+    let bytes = 0;
+    const complete = (value?: JsonObject) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      socket.close();
       if (value) resolveConfig(value);
       else
         reject(
@@ -233,7 +236,24 @@ export async function readT3Config(
           ),
         );
     };
-    const timer = setTimeout(() => finish(), 15_000);
+    const finish = (value?: JsonObject) => {
+      if (settled || closing) return;
+      if (options.boundedRead) {
+        closing = true;
+        pending = value;
+        socket.close();
+        // The existing socket deadline includes the close handshake. Never
+        // return a successful read before observing close, or extend its bound.
+        if (socket.readyState === WebSocket.CLOSED) complete(pending);
+      } else {
+        socket.close();
+        complete(value);
+      }
+    };
+    const timer = setTimeout(() => {
+      socket.close();
+      complete();
+    }, 15_000);
     socket.addEventListener("open", () =>
       socket.send(
         JSON.stringify({
@@ -247,6 +267,12 @@ export async function readT3Config(
     );
     socket.addEventListener("message", (event) => {
       try {
+        if (settled || closing) return;
+        if (options.boundedRead) {
+          if (typeof event.data !== "string") return finish();
+          bytes += Buffer.byteLength(event.data, "utf8");
+          if (bytes > 1024 * 1024) return finish();
+        }
         const decoded = JSON.parse(String(event.data));
         for (const value of Array.isArray(decoded) ? decoded : [decoded]) {
           const message = record(value);
@@ -254,16 +280,23 @@ export async function readT3Config(
             socket.send(JSON.stringify({ _tag: "Pong" }));
             continue;
           }
+          if (options.boundedRead && (message._tag !== "Exit" || message.requestId !== "1"))
+            return finish();
           if (message._tag !== "Exit" || String(message.requestId) !== "1") continue;
           const exit = record(message.exit);
-          finish(exit._tag === "Success" ? record(exit.value) : undefined);
+          const config = record(exit.value);
+          finish(
+            exit._tag === "Success" && (!options.boundedRead || Object.keys(config).length > 0)
+              ? config
+              : undefined,
+          );
         }
       } catch {
         finish();
       }
     });
     socket.addEventListener("error", () => finish());
-    socket.addEventListener("close", () => finish());
+    socket.addEventListener("close", () => (options.boundedRead ? complete(pending) : finish()));
   });
 }
 

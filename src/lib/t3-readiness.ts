@@ -4,6 +4,10 @@ import {
   discoverT3Environment,
   identifier,
   readT3CliVersion,
+  readT3Config,
+  withOwnedT3Session,
+  type T3OwnedSessionResult,
+  type JsonObject,
   record,
   t3Http,
   verifyT3Protocol,
@@ -102,6 +106,175 @@ export async function recheckT3ReadinessPreview(
   );
   if (checked.exitCode !== 0) fail(checked.findings[0]!.code);
 }
+/** Internal acquisition/read evidence, not a doctor result or public projection. */
+export interface T3AuthenticatedReadFoundation {
+  authentication: "verified";
+  authority: "administrative";
+  catalog: "read";
+  project: "deferred" | "not_applicable";
+  effectiveSelection: "deferred";
+}
+// Catalog/shell bodies remain private for subsequent selection work. No body,
+// origin, token, session identifier or private evidence handle is serialized.
+const authenticatedReads = new WeakMap<
+  T3AuthenticatedReadFoundation,
+  { config: JsonObject; shell?: JsonObject }
+>();
+const scopes = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "review:write",
+  "relay:read",
+  "relay:write",
+  "access:read",
+  "access:write",
+];
+const text = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.trim() === value;
+const timestamp = (value: unknown): boolean => {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
+  )
+    return false;
+  const time = Date.parse(value);
+  return (
+    Number.isFinite(time) &&
+    new Date(time).toISOString() === (value.includes(".") ? value : value.replace("Z", ".000Z"))
+  );
+};
+function validAuthDescriptor(value: unknown): boolean {
+  const auth = record(value);
+  return (
+    typeof auth.policy === "string" &&
+    ["desktop-managed-local", "loopback-browser", "remote-reachable", "unsafe-no-auth"].includes(
+      auth.policy,
+    ) &&
+    Array.isArray(auth.bootstrapMethods) &&
+    auth.bootstrapMethods.every(
+      (v) => typeof v === "string" && ["desktop-bootstrap", "one-time-token"].includes(v),
+    ) &&
+    Array.isArray(auth.sessionMethods) &&
+    auth.sessionMethods.every(
+      (v) =>
+        typeof v === "string" &&
+        ["browser-session-cookie", "bearer-access-token", "dpop-access-token"].includes(v),
+    ) &&
+    auth.sessionMethods.includes("bearer-access-token") &&
+    text(auth.sessionCookieName)
+  );
+}
+function readFailure(code: string): never {
+  throw new T3HandoffError(
+    code,
+    "The official T3 authenticated read is incompatible or unavailable.",
+  );
+}
+
+/** Task-free foundation. The same private preview identity pins every effect.
+ * Public recheck is adjacent to actual owned issuance; this is not an atomic lease.
+ */
+export async function collectT3AuthenticatedReadFoundation(
+  preview: T3ReadinessPreview,
+  options: { authenticated: boolean },
+  dependencies: T3ReadinessPreviewDependencies = {},
+): Promise<T3OwnedSessionResult<T3AuthenticatedReadFoundation>> {
+  const identity = previewIdentities.get(preview);
+  // Consent and provenance fail before recheck effects, including on copied results.
+  if (options.authenticated !== true) fail("T3_AUTHENTICATED_REQUIRED");
+  if (!identity || preview.readiness !== "preview_passed" || preview.exitCode !== 0)
+    fail("T3_PREVIEW_REQUIRED");
+  const native: T3NativeDependencies = {
+    ...dependencies,
+    fetch: boundedReadFetch(dependencies),
+    ...(dependencies.runProcess
+      ? {
+          runProcess: (argv, processOptions) =>
+            bounded(async () => {
+              const output = await dependencies.runProcess!(argv, processOptions);
+              if (
+                Buffer.byteLength(output.stdout) > MAX_BYTES ||
+                Buffer.byteLength(output.stderr) > MAX_BYTES
+              )
+                readFailure("T3_RESPONSE_INVALID");
+              return output;
+            }, "T3_UNREACHABLE"),
+        }
+      : {}),
+  };
+  const environment = {
+    baseDir: identity.baseDir,
+    cli: identity.context.settings.cli!,
+    origin: identity.origin,
+  };
+  const cwd = identity.context.checkout ?? identity.cwd;
+  await recheckT3ReadinessPreview(preview, options, dependencies);
+  return withOwnedT3Session(environment, cwd, native, async (request, token) => {
+    const session = await bounded(() => request("/api/auth/session"), "T3_UNREACHABLE");
+    // AuthSessionState exposes NO sessionId/environmentId. The authenticated
+    // method is checked here; environment binding comes from config.environment.
+    if (
+      session.authenticated !== true ||
+      !validAuthDescriptor(session.auth) ||
+      session.sessionMethod !== "bearer-access-token" ||
+      !Array.isArray(session.scopes) ||
+      !session.scopes.every((scope) => typeof scope === "string" && scopes.includes(scope)) ||
+      !session.scopes.includes("orchestration:read") ||
+      (Object.hasOwn(session, "expiresAt") && !timestamp(session.expiresAt))
+    )
+      readFailure("T3_AUTH_FAILED");
+    const config = await readT3Config(identity.origin, token, request, { boundedRead: true });
+    const descriptor = record(config.environment);
+    if (
+      descriptor.environmentId !== identity.environmentId ||
+      descriptor.serverVersion !== identity.serverVersion ||
+      descriptor.orchestrationProtocolVersion !== 1 ||
+      !validAuthDescriptor(config.auth)
+    )
+      readFailure("T3_RESPONSE_INVALID");
+    // Primitive container validation only. No provider classification/defaults.
+    if (
+      !Array.isArray(config.providers) ||
+      !config.settings ||
+      typeof config.settings !== "object" ||
+      Array.isArray(config.settings)
+    )
+      readFailure("T3_RESPONSE_INVALID");
+    let shell: JsonObject | undefined;
+    if (identity.context.checkout) {
+      shell = await bounded(() => request("/api/orchestration/shell"), "T3_UNREACHABLE");
+      if (
+        !Number.isSafeInteger(shell.snapshotSequence) ||
+        (shell.snapshotSequence as number) < 0 ||
+        !timestamp(shell.updatedAt) ||
+        !Array.isArray(shell.projects) ||
+        !Array.isArray(shell.threads)
+      )
+        readFailure("T3_RESPONSE_INVALID");
+      // Identity-bearing primitive shells only, not project/default matching.
+      for (const project of shell.projects) {
+        const value = record(project);
+        if (!identifier(value.id) || !text(value.workspaceRoot)) readFailure("T3_RESPONSE_INVALID");
+      }
+      for (const thread of shell.threads) {
+        const value = record(thread);
+        if (!identifier(value.id) || !identifier(value.projectId))
+          readFailure("T3_RESPONSE_INVALID");
+      }
+    }
+    const value: T3AuthenticatedReadFoundation = {
+      authentication: "verified",
+      authority: "administrative",
+      catalog: "read",
+      project: shell ? "deferred" : "not_applicable",
+      effectiveSelection: "deferred",
+    };
+    authenticatedReads.set(value, { config, shell });
+    return value;
+  });
+}
+
 function fail(code: Code): never {
   throw new T3HandoffError(code, reasons[code]);
 }
@@ -130,6 +303,43 @@ async function readBoundedFile(path: string): Promise<string> {
   } finally {
     await file.close();
   }
+}
+
+function boundedReadFetch(dependencies: T3NativeDependencies): typeof fetch {
+  return (async (input, init) => {
+    const response = await (dependencies.fetch ?? fetch)(input, init);
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return response;
+    }
+    if (response.redirected) fail("T3_HTTP_FAILED");
+    const reader = response.body?.getReader();
+    if (!reader) fail("T3_RESPONSE_INVALID");
+    const cancel = () => {
+      void reader.cancel().catch(() => {});
+    };
+    const timer = setTimeout(cancel, OPERATION_MS);
+    init?.signal?.addEventListener("abort", cancel, { once: true });
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > MAX_BYTES) fail("T3_RESPONSE_INVALID");
+        chunks.push(part.value);
+      }
+    } catch (error) {
+      await reader.cancel().catch(() => {});
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      init?.signal?.removeEventListener("abort", cancel);
+      reader.releaseLock();
+    }
+    return new Response(Buffer.concat(chunks), { status: response.status });
+  }) as typeof fetch;
 }
 
 /** Preview only. No session, catalog, socket, receipt or ordinary doctor collector. */
@@ -276,40 +486,7 @@ async function collectPreview(
           runtimePid = runtime.pid as number;
           return text;
         }, "T3_UNREACHABLE"),
-      fetch: (async (input, init) => {
-        const response = await (dependencies.fetch ?? fetch)(input, init);
-        if (!response.ok) {
-          await response.body?.cancel().catch(() => {});
-          return response;
-        }
-        if (response.redirected) fail("T3_HTTP_FAILED");
-        const reader = response.body?.getReader();
-        if (!reader) fail("T3_RESPONSE_INVALID");
-        const cancel = () => {
-          void reader.cancel().catch(() => {});
-        };
-        const timer = setTimeout(cancel, OPERATION_MS);
-        init?.signal?.addEventListener("abort", cancel, { once: true });
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        try {
-          while (true) {
-            const part = await reader.read();
-            if (part.done) break;
-            size += part.value.byteLength;
-            if (size > MAX_BYTES) fail("T3_RESPONSE_INVALID");
-            chunks.push(part.value);
-          }
-        } catch (error) {
-          await reader.cancel().catch(() => {});
-          throw error;
-        } finally {
-          clearTimeout(timer);
-          init?.signal?.removeEventListener("abort", cancel);
-          reader.releaseLock();
-        }
-        return new Response(Buffer.concat(chunks), { status: response.status });
-      }) as typeof fetch,
+      fetch: boundedReadFetch(dependencies),
     };
     result.facts.cliVersion = await bounded(
       () =>
