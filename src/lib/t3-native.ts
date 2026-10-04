@@ -639,6 +639,8 @@ async function ownedT3SessionLifecycle<T>(
       try {
         session = parseIssue(issued);
       } catch {
+        // Failed ownership parsing must not replace a captured interruption.
+        if (issueInterrupted) throw issueInterrupted;
         throw new T3HandoffError(
           "T3_AUTH_FAILED",
           "Official T3 session issuance failed. Verify --t3-cli and --t3-base-dir point to matching compatible CLI/server components.",

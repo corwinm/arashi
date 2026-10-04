@@ -161,6 +161,83 @@ describe("Task4.5 bounded owned cancellation", () => {
     expect(result.cleanup).toEqual({ status: "unknown", revoke: "not_attempted" });
     expect(vi.getTimerCount()).toBe(0);
   });
+  test.each([
+    ["empty cancellation", "", false, "T3_CHECK_CANCELLED"],
+    ["partial cancellation", "{", false, "T3_CHECK_CANCELLED"],
+    ["empty aggregate deadline", "", true, "T3_CHECK_TIMEOUT"],
+    ["attributable cancellation control", issued.stdout, false, "T3_CHECK_CANCELLED"],
+  ] as const)(
+    "R1 stopped issue preserves interruption: %s",
+    async (_name, stdout, deadline, code) => {
+      vi.useFakeTimers();
+      const abort = new AbortController();
+      const f = fixture(abort.signal, Date.now() + (deadline ? 1000 : 90_000));
+      const run = f.dependencies.runProcess!;
+      let entered!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      f.dependencies.runProcess = async (argv, options) => {
+        if (argv[3] !== "issue") return run(argv, options);
+        f.operations.push("issue");
+        return new Promise((resolve) => {
+          options.signal!.addEventListener(
+            "abort",
+            () => resolve({ ...output(stdout), exitCode: -1 }),
+            { once: true },
+          );
+          entered();
+        });
+      };
+      let uses = 0;
+      const pending = withOwnedT3Session(nativeEnvironment(), ".", f.dependencies, async () => {
+        uses++;
+      });
+      await barrier;
+      if (deadline) await vi.advanceTimersByTimeAsync(1000);
+      else abort.abort();
+      const result = await pending;
+      expect(uses).toBe(0);
+      expect(result.use.status).toBe("not_attempted");
+      expect(f.operations).toEqual(
+        stdout === issued.stdout ? ["issue", "revoke", "list"] : ["issue"],
+      );
+      expect(result.cleanup).toEqual(
+        stdout === issued.stdout
+          ? { status: "verified", revoke: "succeeded" }
+          : { status: "unknown", revoke: "not_attempted" },
+      );
+      expect(JSON.stringify(result)).not.toMatch(/PRIVATE_/);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(result.failure?.code).toBe(code);
+    },
+  );
+  test.each(["", "{"])(
+    "R1 uninterrupted malformed issuance remains auth failure: %j",
+    async (stdout) => {
+      const f = fixture();
+      f.dependencies.runProcess = async (argv) => {
+        f.operations.push(argv[3]);
+        return output(stdout);
+      };
+      const result = await withOwnedT3Session(
+        nativeEnvironment(),
+        ".",
+        f.dependencies,
+        async () => {
+          throw new Error("must not use malformed issue");
+        },
+      );
+      expect(result.failure?.code).toBe("T3_AUTH_FAILED");
+      expect(result.cleanup).toEqual({ status: "unknown", revoke: "not_attempted" });
+      expect(f.operations).toEqual(["issue"]);
+      f.operations.length = 0;
+      await expect(
+        withT3Session(nativeEnvironment(), ".", f.dependencies, async () => true),
+      ).rejects.toMatchObject({ code: "T3_AUTH_FAILED" });
+      expect(f.operations).toEqual(["issue"]);
+    },
+  );
   test("A16 cleanup hung revoke/list each have own 15s bounds and retain read error", async () => {
     vi.useFakeTimers();
     const f = fixture();
