@@ -51,9 +51,16 @@ const fail = (code: string, message: string): never => {
   throw new T3HandoffError(code, message);
 };
 /** Native children must never inherit the shell directory-switch directive. */
-export const nativeChildEnvironment = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
+export const nativeChildEnvironment = (
+  extra: NodeJS.ProcessEnv = {},
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv => {
   const environment = { ...process.env, ...extra };
-  delete environment.ARASHI_DIRECTIVE_FILE;
+  for (const key of Object.keys(environment)) {
+    if ((platform === "win32" ? key.toUpperCase() : key) === "ARASHI_DIRECTIVE_FILE") {
+      delete environment[key];
+    }
+  }
   return environment;
 };
 
