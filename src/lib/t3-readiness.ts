@@ -17,6 +17,9 @@ import type { T3Settings } from "./t3-settings.ts";
 const MAX_BYTES = 1024 * 1024;
 const OPERATION_MS = 15_000;
 const reasons = {
+  T3_IDENTITY_CHANGED: "preview_identity_changed",
+  T3_AUTHENTICATED_REQUIRED: "explicit_authenticated_required",
+  T3_PREVIEW_REQUIRED: "passing_preview_required",
   T3_SELECTION_VERIFIED: "selection_verified",
   T3_SELECTION_INVALID: "selection_invalid",
   T3_CLI_VERIFIED: "cli_verified",
@@ -68,6 +71,37 @@ export interface T3ReadinessPreview {
 export interface T3ReadinessPreviewDependencies extends T3NativeDependencies {
   probePid?: (pid: number) => void;
 }
+interface PreviewIdentity {
+  cwd: string;
+  context: Pick<T3ReadinessContext, "checkout" | "settings">;
+  baseDir: string;
+  origin: string;
+  pid: number;
+  cliVersion: string;
+  serverVersion: string;
+  environmentId: string;
+}
+// Private evidence is deliberately not a field/symbol on the public result.
+// Copies/serialized previews cannot authorize a recheck; public facts are not authority.
+const previewIdentities = new WeakMap<T3ReadinessPreview, PreviewIdentity>();
+
+/** Foundation only: call immediately before future owned acquisition, never issue here. */
+export async function recheckT3ReadinessPreview(
+  preview: T3ReadinessPreview,
+  options: { authenticated: boolean },
+  dependencies: T3ReadinessPreviewDependencies = {},
+): Promise<void> {
+  if (options.authenticated !== true) fail("T3_AUTHENTICATED_REQUIRED");
+  const identity = previewIdentities.get(preview);
+  if (!identity || preview.readiness !== "preview_passed" || preview.exitCode !== 0)
+    fail("T3_PREVIEW_REQUIRED");
+  const checked = await collectPreview(
+    { cwd: identity.cwd, context: identity.context },
+    dependencies,
+    identity,
+  );
+  if (checked.exitCode !== 0) fail(checked.findings[0]!.code);
+}
 function fail(code: Code): never {
   throw new T3HandoffError(code, reasons[code]);
 }
@@ -108,6 +142,19 @@ export async function collectT3ReadinessPreview(
   },
   dependencies: T3ReadinessPreviewDependencies = {},
 ): Promise<T3ReadinessPreview> {
+  return collectPreview(options, dependencies);
+}
+
+async function collectPreview(
+  options: {
+    cwd: string;
+    path?: string;
+    explicitSettings?: T3Settings;
+    context?: Pick<T3ReadinessContext, "checkout" | "settings">;
+  },
+  dependencies: T3ReadinessPreviewDependencies,
+  expected?: PreviewIdentity,
+): Promise<T3ReadinessPreview> {
   const result: T3ReadinessPreview = {
     readiness: "blocked",
     exitCode: 1,
@@ -146,12 +193,16 @@ export async function collectT3ReadinessPreview(
   set("project", "deferred", "T3_PROJECT_DEFAULTS_DEFERRED");
   let active: ReadinessStage["name"] = "selection";
   try {
-    const context =
+    const selected =
       options.context ??
       (await resolveT3ReadinessContext({
         ...options,
         explicitSettings: options.explicitSettings ?? {},
       }));
+    // Snapshot the selected checkout/settings before any native await. Never
+    // re-resolve mutable configuration or environment fallback at the gate.
+    const context = { checkout: selected.checkout, settings: { ...selected.settings } };
+    let runtimePid = 0;
     set("selection", "verified", "T3_SELECTION_VERIFIED");
     if (!context.checkout) set("project", "not_applicable", "T3_PROJECT_NOT_APPLICABLE");
     active = "cli";
@@ -222,6 +273,7 @@ export async function collectT3ReadinessPreview(
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "EPERM") fail("T3_ENVIRONMENT_STALE");
           }
+          runtimePid = runtime.pid as number;
           return text;
         }, "T3_UNREACHABLE"),
       fetch: (async (input, init) => {
@@ -266,6 +318,7 @@ export async function collectT3ReadinessPreview(
         }),
       "T3_UNREACHABLE",
     );
+    if (expected && result.facts.cliVersion !== expected.cliVersion) fail("T3_IDENTITY_CHANGED");
     set("cli", "verified", "T3_CLI_VERIFIED");
     active = "runtime";
     // Native discovery retains physical base ownership and its real PID probe.
@@ -286,6 +339,13 @@ export async function collectT3ReadinessPreview(
     } catch (error) {
       throw runtimeError ?? error;
     }
+    if (
+      expected &&
+      (discovered.baseDir !== expected.baseDir ||
+        discovered.origin !== expected.origin ||
+        runtimePid !== expected.pid)
+    )
+      fail("T3_IDENTITY_CHANGED");
     set("runtime", "verified", "T3_RUNTIME_VERIFIED");
     active = "compatibility";
     const publicDescriptor = await bounded(
@@ -294,6 +354,12 @@ export async function collectT3ReadinessPreview(
     );
     verifyT3Version(publicDescriptor.serverVersion);
     verifyT3Protocol(publicDescriptor);
+    if (
+      expected &&
+      (publicDescriptor.serverVersion !== expected.serverVersion ||
+        publicDescriptor.environmentId !== expected.environmentId)
+    )
+      fail("T3_IDENTITY_CHANGED");
     if (publicDescriptor.serverVersion !== result.facts.cliVersion) fail("T3_VERSION_MISMATCH");
     const environmentId = identifier(publicDescriptor.environmentId);
     const platform = record(publicDescriptor.platform);
@@ -338,6 +404,23 @@ export async function collectT3ReadinessPreview(
     );
     result.readiness = "preview_passed";
     result.exitCode = 0;
+    previewIdentities.set(result, {
+      cwd: options.cwd,
+      context: {
+        checkout: context.checkout,
+        settings: {
+          ...context.settings,
+          cli: context.settings.cli ?? "t3",
+          baseDir: discovered.baseDir,
+        },
+      },
+      baseDir: discovered.baseDir,
+      origin: discovered.origin,
+      pid: runtimePid,
+      cliVersion: result.facts.cliVersion!,
+      serverVersion: publicDescriptor.serverVersion as string,
+      environmentId,
+    });
   } catch (error) {
     const code: Code =
       error instanceof T3HandoffError && Object.hasOwn(reasons, error.code)

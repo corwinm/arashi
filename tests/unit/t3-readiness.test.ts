@@ -657,6 +657,206 @@ describe("D1 public descriptor capabilities", () => {
   });
 });
 
+describe("D1 A10 preview identity recheck foundation", () => {
+  async function evidence(f: Awaited<ReturnType<typeof fixture>>, name: string, issued: number) {
+    if (!process.env.D1_RECHECK_EVIDENCE) return;
+    const events = (await f.effects()).map((event) => {
+      if (event.kind === "process")
+        return {
+          kind: event.kind,
+          argv: ["$SELECTED_CLI", "--version"],
+          cwd: event.cwd === f.repo ? "$CHECKOUT" : "$OTHER",
+          envKeys: event.envKeys,
+        };
+      if (event.kind === "read")
+        return {
+          kind: event.kind,
+          path: event.path === f.runtimePath ? "$SELECTED_RUNTIME" : "$OTHER",
+        };
+      if (event.kind === "http")
+        return { kind: event.kind, method: event.method, path: event.path };
+      return { kind: event.kind };
+    });
+    await writeFile(
+      join(process.env.D1_RECHECK_EVIDENCE, `case-${name}.json`),
+      JSON.stringify({
+        events,
+        controlledIssueCalls: issued,
+        realSessions: 0,
+        immutableSnapshotEqual: true,
+      }),
+    );
+  }
+  async function setup(capabilities = descriptor().capabilities) {
+    const f = await fixture();
+    const { nativeChildEnvironment } = await import("../../src/lib/t3-native.ts");
+    const { resolveT3ReadinessContext } = await import("../../src/lib/t3-readiness-context.ts");
+    const context = await resolveT3ReadinessContext({
+      cwd: f.repo,
+      explicitSettings: { cli: f.cli, baseDir: f.baseDir },
+    });
+    f.allowProcess(
+      f.versionArgv,
+      f.repo,
+      nativeChildEnvironment({ ...f.env, T3CODE_HOME: f.baseDir }),
+    );
+    f.allowRead(f.runtimePath);
+    f.allowHttp("GET", "/.well-known/t3/environment");
+    let extra: Record<string, unknown> = { capabilities };
+    const transport = descriptorFetch(f);
+    const dependencies = {
+      ...f.dependencies,
+      runProcess: (argv: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv }) =>
+        f.dependencies.runProcess(argv, {
+          ...options,
+          env: nativeChildEnvironment({ ...f.env, T3CODE_HOME: options.env.T3CODE_HOME }),
+        }),
+      fetch: (async (input, init) => {
+        const response = await transport(input, init);
+        const { record } = await import("../../src/lib/t3-native.ts");
+        return Response.json({ ...record(await response.json()), ...extra });
+      }) as typeof fetch,
+    };
+    const module = await import("../../src/lib/t3-readiness.ts");
+    const result = await module.collectT3ReadinessPreview({ cwd: f.repo, context }, dependencies);
+    expect(result.readiness).toBe("preview_passed");
+    const recheck = async (authenticated = true, selected = result) => {
+      // Historical no-recheck gate is an explicit test-only assertion RED adapter.
+      // Missing-export RED is recorded separately; this adapter is never used in GREEN.
+      if (process.env.D1_BASELINE_RECHECK === "1") return;
+      await module.recheckT3ReadinessPreview(selected, { authenticated }, dependencies);
+    };
+    return {
+      f,
+      context,
+      result,
+      recheck,
+      changeDescriptor: (value: Record<string, unknown>) => {
+        extra = value;
+      },
+    };
+  }
+  test("exports the bounded recheck foundation", async () => {
+    const module = await import("../../src/lib/t3-readiness.ts");
+    expect(module.recheckT3ReadinessPreview).toBeTypeOf("function");
+  });
+  test.each([
+    "CLI",
+    "server",
+    "environment",
+    "runtime PID",
+    "runtime origin",
+    "matching version tuple",
+  ])("rejects finite %s drift before the controlled issue callback", async (kind) => {
+    const { f, result, recheck, changeDescriptor } = await setup();
+    await f.installMarkers();
+    const publicBefore = JSON.stringify(result);
+    if (kind === "CLI" || kind === "matching version tuple") {
+      await writeFile(f.cli, (await readFile(f.cli, "utf8")).replace("t3 v0.0.43", "t3 v0.0.45"));
+    }
+    if (kind === "server" || kind === "matching version tuple")
+      changeDescriptor({ serverVersion: "0.0.45" });
+    if (kind === "environment") changeDescriptor({ environmentId: "environment-2" });
+    if (kind.startsWith("runtime")) {
+      const runtime = JSON.parse(await readFile(f.runtimePath, "utf8"));
+      await writeFile(
+        f.runtimePath,
+        JSON.stringify({
+          ...runtime,
+          ...(kind === "runtime PID"
+            ? { pid: process.pid }
+            : { origin: `http://localhost:${runtime.port}` }),
+        }),
+      );
+    }
+    const before = await f.snapshot();
+    let issued = 0;
+    const controlledAcquisition = async () => {
+      await recheck();
+      issued++;
+    };
+    await expect(controlledAcquisition()).rejects.toMatchObject({ code: "T3_IDENTITY_CHANGED" });
+    expect(issued).toBe(0);
+    expect(await f.activeSessions()).toEqual([]);
+    expect(await f.snapshot()).toEqual(before);
+    expect(JSON.stringify(result)).toBe(publicBefore);
+    const expected =
+      kind === "CLI" || kind === "matching version tuple"
+        ? ["process"]
+        : kind.startsWith("runtime")
+          ? ["process", "read"]
+          : ["process", "read", "http"];
+    expect((await f.effects()).map((e) => e.kind)).toEqual([
+      "process",
+      "read",
+      "http",
+      ...expected,
+    ]);
+    for (const marker of Object.values(f.markers)) await expect(access(marker)).rejects.toThrow();
+    await evidence(f, kind.replaceAll(" ", "-"), issued);
+  });
+  test.each(["verified", "deferred"])(
+    "unchanged %s tuple succeeds without reselecting mutable context or public facts",
+    async (compatibility) => {
+      const { f, context, result, recheck } = await setup(
+        compatibility === "deferred"
+          ? { repositoryIdentity: false, connectionProbe: false }
+          : descriptor().capabilities,
+      );
+      expect(stage(result, "compatibility").state).toBe(compatibility);
+      await f.installMarkers();
+      const before = await f.snapshot();
+      context.settings.cli = "CANARY-alternative";
+      context.settings.baseDir = join(f.root, "CANARY-alternative");
+      context.checkout = f.root;
+      result.facts.environmentId = "CANARY-public-mutation";
+      const publicBefore = JSON.stringify(result);
+      let issued = 0;
+      await recheck();
+      issued++;
+      expect(issued).toBe(1); // Controlled callback only, not a real session lifecycle.
+      expect((await f.effects()).map((e) => e.kind)).toEqual([
+        "process",
+        "read",
+        "http",
+        "process",
+        "read",
+        "http",
+      ]);
+      expect(await f.snapshot()).toEqual(before);
+      expect(JSON.stringify(result)).toBe(publicBefore);
+      expect(await f.activeSessions()).toEqual([]);
+      expect(Object.keys(result).toSorted()).toEqual([
+        "cleanup",
+        "exitCode",
+        "facts",
+        "findings",
+        "readiness",
+        "stages",
+      ]);
+      expect(JSON.stringify(result)).not.toContain(f.origin);
+      for (const marker of Object.values(f.markers)) await expect(access(marker)).rejects.toThrow();
+      await evidence(f, `unchanged-${compatibility}`, issued);
+    },
+  );
+  test.each(["no consent", "copied preview", "blocked preview"])(
+    "rejects %s before any recheck effect",
+    async (kind) => {
+      const { f, result, recheck } = await setup();
+      const selected = kind === "copied preview" ? structuredClone(result) : result;
+      if (kind === "blocked preview") selected.readiness = "blocked";
+      const before = await f.snapshot();
+      await expect(recheck(kind !== "no consent", selected)).rejects.toMatchObject({
+        code: kind === "no consent" ? "T3_AUTHENTICATED_REQUIRED" : "T3_PREVIEW_REQUIRED",
+      });
+      expect((await f.effects()).map((e) => e.kind)).toEqual(["process", "read", "http"]);
+      expect(await f.snapshot()).toEqual(before);
+      expect(await f.activeSessions()).toEqual([]);
+      await evidence(f, kind.replaceAll(" ", "-"), 0);
+    },
+  );
+});
+
 describe("D1 bounded preview A06–A09", () => {
   test("A06 preview effect allowlist and immutable state with explicit deferral", async () => {
     const f = await fixture();
