@@ -1,4 +1,6 @@
-import { open } from "node:fs/promises";
+import { open, realpath } from "node:fs/promises";
+import { isAbsolute } from "node:path";
+import { projectUsesWorkspace } from "./t3-handoff.ts";
 import { constants } from "node:fs";
 import {
   discoverT3Environment,
@@ -114,14 +116,22 @@ export interface T3AuthenticatedReadFoundation {
   authentication: "verified";
   authority: "administrative";
   catalog: "read";
-  project: "deferred" | "not_applicable";
+  project: "verified" | "deferred" | "not_applicable";
   effectiveSelection: "deferred";
 }
-// Catalog/shell bodies remain private for subsequent selection work. No body,
-// origin, token, session identifier or private evidence handle is serialized.
+// Retain only the matched ID/default snapshot, never thread/message bodies.
+interface ProjectDefaults {
+  id: string;
+  defaultModelSelection: {
+    instanceId: string;
+    model: string;
+    options?: { id: string; value: string | boolean }[];
+  } | null;
+  defaultThreadEnvMode?: "local" | "worktree" | null;
+}
 const authenticatedReads = new WeakMap<
   T3AuthenticatedReadFoundation,
-  { config: JsonObject; shell?: JsonObject }
+  { config: JsonObject; project?: ProjectDefaults }
 >();
 const scopes = [
   "orchestration:read",
@@ -173,6 +183,94 @@ function readFailure(code: string): never {
     code,
     "The official T3 authenticated read is incompatible or unavailable.",
   );
+}
+
+const object = (value: unknown): value is JsonObject =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+// Read the canonical shell wire defaults structurally only. Catalog routing,
+// precedence, option support and provider readiness belong to later gates.
+function projectDefaults(project: JsonObject): ProjectDefaults {
+  const selected = project.defaultModelSelection;
+  let defaultModelSelection: ProjectDefaults["defaultModelSelection"] = null;
+  if (selected !== null) {
+    if (!object(selected) || !text(selected.instanceId) || !text(selected.model))
+      readFailure("T3_RESPONSE_INVALID");
+    let options: { id: string; value: string | boolean }[] | undefined;
+    if (Object.hasOwn(selected, "options")) {
+      if (!Array.isArray(selected.options)) readFailure("T3_RESPONSE_INVALID");
+      options = selected.options.map((entry) => {
+        if (
+          !object(entry) ||
+          !text(entry.id) ||
+          !(text(entry.value) || typeof entry.value === "boolean")
+        )
+          readFailure("T3_RESPONSE_INVALID");
+        return { id: entry.id, value: entry.value };
+      });
+    }
+    defaultModelSelection = {
+      instanceId: selected.instanceId,
+      model: selected.model,
+      ...(options ? { options } : {}),
+    };
+  }
+  const mode = project.defaultThreadEnvMode;
+  if (
+    Object.hasOwn(project, "defaultThreadEnvMode") &&
+    mode !== null &&
+    mode !== "local" &&
+    mode !== "worktree"
+  )
+    readFailure("T3_RESPONSE_INVALID");
+  return {
+    id: project.id as string,
+    defaultModelSelection,
+    ...(Object.hasOwn(project, "defaultThreadEnvMode")
+      ? { defaultThreadEnvMode: mode as "local" | "worktree" | null }
+      : {}),
+  };
+}
+
+async function matchProject(
+  shell: JsonObject,
+  checkout: string,
+): Promise<ProjectDefaults | undefined> {
+  const physical = await realpath(checkout);
+  const matches: JsonObject[] = [];
+  const ids = new Set<string>();
+  for (const raw of shell.projects as unknown[]) {
+    const project = record(raw);
+    const id = identifier(project.id);
+    if (!id || ids.has(id) || !text(project.workspaceRoot) || !isAbsolute(project.workspaceRoot))
+      readFailure("T3_RESPONSE_INVALID");
+    ids.add(id);
+    if (await projectUsesWorkspace(project.workspaceRoot, physical)) matches.push(project);
+  }
+  if (matches.length > 1) readFailure("T3_RESPONSE_INVALID");
+  const project = matches[0];
+  if (!project) return undefined;
+  const identity = project.repositoryIdentity;
+  if (identity !== undefined && identity !== null) {
+    if (
+      !object(identity) ||
+      !text(identity.canonicalKey) ||
+      !object(identity.locator) ||
+      identity.locator.source !== "git-remote" ||
+      !text(identity.locator.remoteName) ||
+      !text(identity.locator.remoteUrl)
+    )
+      readFailure("T3_RESPONSE_INVALID");
+    for (const key of ["webUrl", "rootPath", "displayName", "provider", "owner", "name"]) {
+      if (Object.hasOwn(identity, key) && !text(identity[key])) readFailure("T3_RESPONSE_INVALID");
+    }
+    if (
+      Object.hasOwn(identity, "rootPath") &&
+      !(await projectUsesWorkspace(identity.rootPath, physical))
+    )
+      readFailure("T3_RESPONSE_INVALID");
+  }
+  return projectDefaults(project);
 }
 
 /** Task-free foundation. The same private preview identity pins every effect.
@@ -251,9 +349,9 @@ export async function collectT3AuthenticatedReadFoundation(
         Array.isArray(config.settings)
       )
         readFailure("T3_RESPONSE_INVALID");
-      let shell: JsonObject | undefined;
+      let project: ProjectDefaults | undefined;
       if (identity.context.checkout) {
-        shell = await request("/api/orchestration/shell");
+        const shell = await request("/api/orchestration/shell");
         if (
           !Number.isSafeInteger(shell.snapshotSequence) ||
           (shell.snapshotSequence as number) < 0 ||
@@ -262,26 +360,23 @@ export async function collectT3AuthenticatedReadFoundation(
           !Array.isArray(shell.threads)
         )
           readFailure("T3_RESPONSE_INVALID");
-        // Identity-bearing primitive shells only, not project/default matching.
-        for (const project of shell.projects) {
-          const value = record(project);
-          if (!identifier(value.id) || !text(value.workspaceRoot))
-            readFailure("T3_RESPONSE_INVALID");
-        }
         for (const thread of shell.threads) {
           const value = record(thread);
           if (!identifier(value.id) || !identifier(value.projectId))
             readFailure("T3_RESPONSE_INVALID");
         }
+        // Pure identity reads share the existing operation/check deadline.
+        // No status, filters, hooks, creation, receipt or repair effects.
+        project = await runT3Read(control, () => matchProject(shell, identity.context.checkout!));
       }
       const value: T3AuthenticatedReadFoundation = {
         authentication: "verified",
         authority: "administrative",
         catalog: "read",
-        project: shell ? "deferred" : "not_applicable",
+        project: identity.context.checkout ? (project ? "verified" : "deferred") : "not_applicable",
         effectiveSelection: "deferred",
       };
-      authenticatedReads.set(value, { config, shell });
+      authenticatedReads.set(value, { config, project });
       return value;
     });
   } finally {

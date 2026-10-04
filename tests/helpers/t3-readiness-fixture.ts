@@ -549,9 +549,15 @@ export async function createReadinessFixture() {
         });
         await waitForSocketsClosed();
       },
-      async snapshot(): Promise<ReadinessSnapshot> {
+      async snapshot(selectedCheckout = repo): Promise<ReadinessSnapshot> {
         return {
-          files: await fileSnapshot([repo, home, baseDir, bin]),
+          files: await fileSnapshot([
+            repo,
+            ...(selectedCheckout === repo ? [] : [selectedCheckout]),
+            home,
+            baseDir,
+            bin,
+          ]),
           refs: await git(["show-ref"]),
           worktrees: await git(["worktree", "list", "--porcelain"]),
         };
