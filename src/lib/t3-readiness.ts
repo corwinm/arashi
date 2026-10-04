@@ -85,6 +85,9 @@ export interface T3ReadinessPreview {
 }
 export interface T3ReadinessPreviewDependencies extends T3NativeDependencies {
   probePid?: (pid: number) => void;
+  /** Epoch milliseconds recorded once at authenticated check entry. Separate
+   * from the monotonic operation/deadline clock; never used by dispatch. */
+  checkTime?: () => number;
 }
 interface PreviewIdentity {
   cwd: string;
@@ -138,7 +141,12 @@ interface ProjectDefaults {
 }
 const authenticatedReads = new WeakMap<
   T3AuthenticatedReadFoundation,
-  { config: JsonObject; project?: ProjectDefaults; context: PreviewIdentity["context"] }
+  {
+    config: JsonObject;
+    project?: ProjectDefaults;
+    context: PreviewIdentity["context"];
+    checkTime: number;
+  }
 >();
 const scopes = [
   "orchestration:read",
@@ -293,6 +301,7 @@ export async function collectT3AuthenticatedReadFoundation(
   if (options.authenticated !== true) fail("T3_AUTHENTICATED_REQUIRED");
   if (!identity || preview.readiness !== "preview_passed" || preview.exitCode !== 0)
     fail("T3_PREVIEW_REQUIRED");
+  const checkTime = (dependencies.checkTime ?? Date.now)();
   const controller = new AbortController();
   const cancel = () => controller.abort();
   const signals = [options.signal, dependencies.readiness?.signal].filter(
@@ -383,7 +392,7 @@ export async function collectT3AuthenticatedReadFoundation(
         project: identity.context.checkout ? (project ? "verified" : "deferred") : "not_applicable",
         effectiveSelection: "deferred",
       };
-      authenticatedReads.set(value, { config, project, context: identity.context });
+      authenticatedReads.set(value, { config, project, context: identity.context, checkTime });
       return value;
     });
   } finally {
@@ -407,6 +416,58 @@ export interface T3EffectiveSelectionFoundation {
   selection: T3Selection;
   sources: Partial<Record<keyof T3Settings, T3EffectiveSelectionSource>>;
   optionSources: { id: string; source: T3EffectiveSelectionSource }[];
+}
+
+interface ProviderStateEvidence {
+  status: "ready" | "warning";
+  authStatus: "authenticated" | "unknown";
+  checkedAt: string;
+  checkTime: number;
+  project: T3AuthenticatedReadFoundation["project"];
+}
+const providerStates = new WeakMap<T3EffectiveSelectionFoundation, ProviderStateEvidence>();
+
+/** Internal observed prerequisite classification, not a command result or a
+ * guarantee of task execution. Cleanup remains independent of these observations. */
+export interface T3ProviderStateFoundation {
+  readiness: "global_verified" | "checkout_verified" | "unknown";
+  provider: {
+    state: "verified" | "unknown";
+    status: "ready" | "warning";
+    authStatus: "authenticated" | "unknown";
+    checkedAt: string | null;
+    freshness: "fresh" | "stale" | "unknown";
+    severity?: "warning";
+  };
+}
+
+/** Pure readiness-only gate over same-object private selection evidence. */
+export function classifyT3ReadinessProviderState(
+  selected: T3EffectiveSelectionFoundation,
+): T3ProviderStateFoundation {
+  const evidence = providerStates.get(selected);
+  if (!evidence) readFailure("T3_RESPONSE_INVALID");
+  const { status, authStatus, checkedAt, checkTime, project } = evidence;
+  const valid = timestamp(checkedAt) && Number.isFinite(checkTime);
+  const age = valid ? checkTime - Date.parse(checkedAt) : NaN;
+  const freshness = !valid || age < -30_000 ? "unknown" : age > 300_000 ? "stale" : "fresh";
+  const verified = freshness === "fresh" && status === "ready" && authStatus === "authenticated";
+  return {
+    readiness:
+      !verified || project === "deferred"
+        ? "unknown"
+        : project === "not_applicable"
+          ? "global_verified"
+          : "checkout_verified",
+    provider: {
+      state: verified ? "verified" : "unknown",
+      status,
+      authStatus,
+      checkedAt: freshness === "unknown" ? null : checkedAt,
+      freshness,
+      ...(!verified ? { severity: "warning" as const } : {}),
+    },
+  };
 }
 
 /** Resolve only exact private authenticated evidence; no I/O or context reload.
@@ -451,7 +512,7 @@ export function resolveT3ReadinessEffectiveSelection(
       },
     },
   );
-  return {
+  const result: T3EffectiveSelectionFoundation = {
     effectiveSelection: "resolved",
     project: context.checkout ? (project ? "verified" : "deferred") : "not_applicable",
     provisional: !!context.checkout && !project,
@@ -459,6 +520,19 @@ export function resolveT3ReadinessEffectiveSelection(
     sources,
     optionSources,
   };
+  // Strict shared resolution has already validated the whole catalog and
+  // rejected explicit blockers. Bind only the exact routing ID it selected.
+  const provider = (config.providers as JsonObject[]).find(
+    (entry) => entry.instanceId === selection.instanceId,
+  )!;
+  providerStates.set(result, {
+    status: provider.status as ProviderStateEvidence["status"],
+    authStatus: record(provider.auth).status as ProviderStateEvidence["authStatus"],
+    checkedAt: provider.checkedAt as string,
+    checkTime: evidence.checkTime,
+    project: result.project,
+  });
+  return result;
 }
 
 function fail(code: Code): never {
