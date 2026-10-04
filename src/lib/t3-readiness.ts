@@ -7,6 +7,8 @@ import {
   identifier,
   readT3CliVersion,
   readT3Config,
+  resolveT3Selection,
+  type T3Selection,
   withOwnedT3Session,
   type T3OwnedSessionResult,
   type JsonObject,
@@ -18,7 +20,11 @@ import {
 } from "./t3-native.ts";
 import { T3HandoffError } from "./t3-error.ts";
 import { checkT3Read, runT3Read, t3Now } from "./t3-operation.ts";
-import { resolveT3ReadinessContext, type T3ReadinessContext } from "./t3-readiness-context.ts";
+import {
+  resolveT3ReadinessContext,
+  type T3ReadinessContext,
+  type T3ReadinessSettingSource,
+} from "./t3-readiness-context.ts";
 import type { T3Settings } from "./t3-settings.ts";
 
 const MAX_BYTES = 1024 * 1024;
@@ -82,7 +88,8 @@ export interface T3ReadinessPreviewDependencies extends T3NativeDependencies {
 }
 interface PreviewIdentity {
   cwd: string;
-  context: Pick<T3ReadinessContext, "checkout" | "settings">;
+  context: Pick<T3ReadinessContext, "checkout" | "settings"> &
+    Partial<Pick<T3ReadinessContext, "sources">>;
   baseDir: string;
   origin: string;
   pid: number;
@@ -131,7 +138,7 @@ interface ProjectDefaults {
 }
 const authenticatedReads = new WeakMap<
   T3AuthenticatedReadFoundation,
-  { config: JsonObject; project?: ProjectDefaults }
+  { config: JsonObject; project?: ProjectDefaults; context: PreviewIdentity["context"] }
 >();
 const scopes = [
   "orchestration:read",
@@ -376,13 +383,82 @@ export async function collectT3AuthenticatedReadFoundation(
         project: identity.context.checkout ? (project ? "verified" : "deferred") : "not_applicable",
         effectiveSelection: "deferred",
       };
-      authenticatedReads.set(value, { config, project });
+      authenticatedReads.set(value, { config, project, context: identity.context });
       return value;
     });
   } finally {
     process.removeListener("SIGINT", cancel);
     for (const signal of signals) signal.removeEventListener("abort", cancel);
   }
+}
+
+export type T3EffectiveSelectionSource =
+  | T3ReadinessSettingSource
+  | "project"
+  | "server"
+  | "catalog";
+/** Bounded internal selection evidence, NOT final readiness/provider acceptance.
+ * Model/options semantic expansion and freshness remain separate later gates.
+ */
+export interface T3EffectiveSelectionFoundation {
+  effectiveSelection: "resolved";
+  project: T3AuthenticatedReadFoundation["project"];
+  provisional: boolean;
+  selection: T3Selection;
+  sources: Partial<Record<keyof T3Settings, T3EffectiveSelectionSource>>;
+  optionSources: { id: string; source: T3EffectiveSelectionSource }[];
+}
+
+/** Resolve only exact private authenticated evidence; no I/O or context reload.
+ * This separate gate leaves project-read success and cleanup independently intact.
+ */
+export function resolveT3ReadinessEffectiveSelection(
+  read: T3AuthenticatedReadFoundation,
+): T3EffectiveSelectionFoundation {
+  const evidence = authenticatedReads.get(read);
+  if (!evidence) readFailure("T3_RESPONSE_INVALID");
+  const { config, project, context } = evidence;
+  const inherited: T3EffectiveSelectionSource = project?.defaultModelSelection
+    ? "project"
+    : "server";
+  const sources: T3EffectiveSelectionFoundation["sources"] = {};
+  const optionSources: T3EffectiveSelectionFoundation["optionSources"] = [];
+  for (const key of ["cli", "baseDir"] as const)
+    if (context.sources?.[key]) sources[key] = context.sources[key];
+  const source = (
+    value: "authored" | "saved" | "catalog",
+    leaf: keyof T3Settings,
+  ): T3EffectiveSelectionSource =>
+    value === "authored"
+      ? (context.sources?.[leaf] ?? "cli")
+      : value === "saved"
+        ? inherited
+        : "catalog";
+  const selection = resolveT3Selection(
+    config,
+    context.settings,
+    project ? { defaultModelSelection: project.defaultModelSelection } : undefined,
+    {
+      readiness: true,
+      provenance: (resolved) => {
+        sources.provider = source(resolved.provider, "provider");
+        sources.model = source(resolved.model, "model");
+        for (const [id, origin] of Object.entries(resolved.options)) {
+          const optionSource = source(origin, "effort");
+          optionSources.push({ id, source: optionSource });
+          if (id === "effort" || id === "reasoningEffort") sources.effort = optionSource;
+        }
+      },
+    },
+  );
+  return {
+    effectiveSelection: "resolved",
+    project: context.checkout ? (project ? "verified" : "deferred") : "not_applicable",
+    provisional: !!context.checkout && !project,
+    selection,
+    sources,
+    optionSources,
+  };
 }
 
 function fail(code: Code): never {
@@ -470,7 +546,7 @@ async function collectPreview(
     cwd: string;
     path?: string;
     explicitSettings?: T3Settings;
-    context?: Pick<T3ReadinessContext, "checkout" | "settings">;
+    context?: PreviewIdentity["context"];
   },
   dependencies: T3ReadinessPreviewDependencies,
   expected?: PreviewIdentity,
@@ -521,7 +597,11 @@ async function collectPreview(
       }));
     // Snapshot the selected checkout/settings before any native await. Never
     // re-resolve mutable configuration or environment fallback at the gate.
-    const context = { checkout: selected.checkout, settings: { ...selected.settings } };
+    const context = {
+      checkout: selected.checkout,
+      settings: { ...selected.settings },
+      sources: { ...selected.sources },
+    };
     let runtimePid = 0;
     set("selection", "verified", "T3_SELECTION_VERIFIED");
     if (!context.checkout) set("project", "not_applicable", "T3_PROJECT_NOT_APPLICABLE");
@@ -703,6 +783,7 @@ async function collectPreview(
       cwd: options.cwd,
       context: {
         checkout: context.checkout,
+        sources: { ...context.sources },
         settings: {
           ...context.settings,
           cli: context.settings.cli ?? "t3",

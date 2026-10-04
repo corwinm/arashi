@@ -773,11 +773,109 @@ export async function withT3Session<T>(
   return outcome!;
 }
 
+// Readiness-only wire admission. Ordinary dispatch retains its compatibility
+// policy. Validate consumed scalars without retaining extensions or classifying
+// freshness; checkedAt's time interpretation belongs to the later state gate.
+const object = (v: unknown): v is JsonObject => !!v && typeof v === "object" && !Array.isArray(v);
+const text = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.trim() === v;
+const optionalBoolean = (v: JsonObject, key: string) =>
+  !Object.hasOwn(v, key) || typeof v[key] === "boolean";
+function admitReadinessCatalog(config: JsonObject, project?: JsonObject): void {
+  const reject = () => fail("T3_CATALOG_INVALID", "T3 returned an incompatible selection catalog.");
+  const scalar = (v: unknown) => text(v) || typeof v === "boolean";
+  const selection = (v: unknown) => {
+    if (v === undefined || v === null) return;
+    if (!object(v) || !text(v.instanceId) || !text(v.model)) reject();
+    const s = v as JsonObject;
+    if (
+      Object.hasOwn(s, "options") &&
+      (!Array.isArray(s.options) ||
+        s.options.some((o) => !object(o) || !text(o.id) || !scalar(o.value)))
+    )
+      reject();
+  };
+  if (!Array.isArray(config.providers) || !object(config.settings)) reject();
+  selection(record(config.settings).defaultModelSelection);
+  selection(project?.defaultModelSelection);
+  const ids = new Set<string>();
+  for (const raw of config.providers as unknown[]) {
+    if (!object(raw)) reject();
+    const p = raw as JsonObject;
+    if (
+      !identifier(p.instanceId) ||
+      !text(p.driver) ||
+      ids.has(p.instanceId as string) ||
+      typeof p.enabled !== "boolean" ||
+      typeof p.installed !== "boolean" ||
+      !text(p.status) ||
+      !["ready", "warning", "error", "disabled"].includes(p.status) ||
+      !object(p.auth) ||
+      !text(p.auth.status) ||
+      !["authenticated", "unauthenticated", "unknown"].includes(p.auth.status) ||
+      typeof p.checkedAt !== "string" ||
+      !(p.version === null || text(p.version)) ||
+      (Object.hasOwn(p, "availability") &&
+        (!text(p.availability) || !["available", "unavailable"].includes(p.availability))) ||
+      !Array.isArray(p.models)
+    )
+      reject();
+    ids.add(p.instanceId as string);
+    for (const rawModel of p.models as unknown[]) {
+      if (!object(rawModel)) reject();
+      const m = rawModel as JsonObject;
+      if (
+        !text(m.slug) ||
+        !optionalBoolean(m, "isDefault") ||
+        (Object.hasOwn(m, "aliases") && (!Array.isArray(m.aliases) || !m.aliases.every(text))) ||
+        !(m.capabilities === null || object(m.capabilities))
+      )
+        reject();
+      const capabilities = record(m.capabilities);
+      if (
+        Object.hasOwn(capabilities, "optionDescriptors") &&
+        !Array.isArray(capabilities.optionDescriptors)
+      )
+        reject();
+      for (const rawDescriptor of (capabilities.optionDescriptors ?? []) as unknown[]) {
+        if (!object(rawDescriptor)) reject();
+        const d = rawDescriptor as JsonObject;
+        if (
+          !text(d.id) ||
+          (d.type !== "select" && d.type !== "boolean") ||
+          (Object.hasOwn(d, "currentValue") &&
+            (d.type === "select" ? !text(d.currentValue) : typeof d.currentValue !== "boolean"))
+        )
+          reject();
+        if (d.type === "select") {
+          if (!Array.isArray(d.options)) reject();
+          for (const rawChoice of d.options as unknown[]) {
+            if (
+              !object(rawChoice) ||
+              !text(rawChoice.id) ||
+              !optionalBoolean(rawChoice, "isDefault")
+            )
+              reject();
+          }
+        }
+      }
+    }
+  }
+}
+
 export function resolveT3Selection(
   config: JsonObject,
   settings: T3Settings,
   project?: JsonObject,
+  policy: {
+    readiness?: boolean;
+    provenance?: (sources: {
+      provider: "authored" | "saved" | "catalog";
+      model: "authored" | "saved" | "catalog";
+      options: Record<string, "authored" | "saved" | "catalog">;
+    }) => void;
+  } = {},
 ): T3Selection {
+  if (policy.readiness) admitReadinessCatalog(config, project);
   const providers = records(config.providers).filter(
     (provider) =>
       provider.enabled === true &&
@@ -792,9 +890,22 @@ export function resolveT3Selection(
   let candidates = settings.provider
     ? providers.filter((provider) => provider.instanceId === settings.provider)
     : providers.filter((provider) => provider.instanceId === saved.instanceId);
-  if (settings.provider && candidates.length === 0)
+  if (policy.readiness) {
+    const exact =
+      settings.provider &&
+      records(config.providers).some((p) => p.instanceId === settings.provider);
+    // A routing identity, even when rejected, never becomes a driver alias.
+    if (exact && (candidates.length !== 1 || candidates[0]!.status === "disabled"))
+      return fail("T3_PROVIDER_AMBIGUOUS", "The selected T3 provider instance is unavailable.");
+    candidates = candidates.filter((p) => p.status !== "disabled");
+    if (settings.provider && !exact && candidates.length === 0)
+      candidates = providers.filter(
+        (p) => p.driver === settings.provider && p.status !== "disabled",
+      );
+  } else if (settings.provider && candidates.length === 0)
     candidates = providers.filter((provider) => provider.driver === settings.provider);
-  if (!settings.provider && candidates.length === 0 && !saved.instanceId) candidates = providers;
+  if (!settings.provider && candidates.length === 0 && !saved.instanceId)
+    candidates = policy.readiness ? providers.filter((p) => p.status !== "disabled") : providers;
   if (candidates.length !== 1)
     return fail(
       "T3_PROVIDER_AMBIGUOUS",
@@ -828,6 +939,7 @@ export function resolveT3Selection(
   const descriptors = records(record(model.capabilities).optionDescriptors);
   const authored = useSaved ? records(saved.options) : [];
   const options: T3Selection["options"] = [];
+  const optionSources: Record<string, "authored" | "saved" | "catalog"> = Object.create(null);
   if (authored.some((option) => !descriptors.some((descriptor) => descriptor.id === option.id)))
     return fail(
       "T3_OPTIONS_UNSUPPORTED",
@@ -856,6 +968,12 @@ export function resolveT3Selection(
         "The selected model does not support the requested or saved option. Choose a supported --t3-effort or update T3's defaults.",
       );
     options.push({ id: descriptor.id, value: value as string | boolean });
+    optionSources[descriptor.id] =
+      ["effort", "reasoningEffort"].includes(descriptor.id) && settings.effort !== undefined
+        ? "authored"
+        : authored.some((o) => o.id === descriptor.id)
+          ? "saved"
+          : "catalog";
   }
   if (
     settings.effort !== undefined &&
@@ -864,6 +982,16 @@ export function resolveT3Selection(
     )
   )
     return fail("T3_EFFORT_UNSUPPORTED", "The selected model does not advertise reasoning effort.");
+  policy.provenance?.({
+    provider: settings.provider !== undefined ? "authored" : saved.instanceId ? "saved" : "catalog",
+    model:
+      settings.model !== undefined
+        ? "authored"
+        : sameProvider && typeof saved.model === "string"
+          ? "saved"
+          : "catalog",
+    options: optionSources,
+  });
   return { instanceId, model: model.slug as string, options };
 }
 
