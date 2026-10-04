@@ -74,14 +74,14 @@ const server = Bun.serve({hostname:'127.0.0.1',port:0,
     const body = await request.text();
     if (request.method === 'POST' && body !== '{}') return denied('body');
     if (request.method === 'GET' && body) return denied('body');
-    if (!['/api/server/environment','/redirect'].includes(url.pathname) && !authorized(request)) return denied('auth');
-    if (url.pathname === '/api/server/environment' && request.headers.has('authorization')) return denied('public-auth');
+    if (!['/.well-known/t3/environment','/redirect'].includes(url.pathname) && !authorized(request)) return denied('auth');
+    if (url.pathname === '/.well-known/t3/environment' && request.headers.has('authorization')) return denied('public-auth');
     log({kind:'http',method:request.method,path:url.pathname,body:body ? 'empty-object' : 'absent'});
     if (url.pathname === '/redirect') return new Response(null,{status:302,headers:{location:'/forbidden'}});
-    if (url.pathname === '/api/server/environment') return Response.json({environmentId:'environment-1',serverVersion:'0.0.43',orchestrationProtocolVersion:1,platform:{os:process.platform}});
+    if (url.pathname === '/.well-known/t3/environment') return Response.json({environmentId:'environment-1',serverVersion:'0.0.43',orchestrationProtocolVersion:1,platform:{os:process.platform}});
     if (url.pathname === '/api/auth/websocket-ticket') return Response.json({ticket:sessions().find(s => request.headers.get('authorization') === 'Bearer ' + s.token).ticket});
     if (url.pathname === '/api/auth/session') return Response.json({authenticated:true,scopes:['orchestration:read','orchestration:operate']});
-    if (url.pathname === '/api/orchestration/snapshot') return Response.json({projects:[],threads:[]});
+    if (url.pathname === '/api/orchestration/shell') return Response.json({snapshotSequence:0,projects:[],threads:[],updatedAt:'2026-01-01T00:00:00.000Z'});
     return denied('route');
   },
   websocket:{
@@ -433,10 +433,10 @@ export async function createReadinessFixture() {
       },
       allowHttp(method: "GET" | "POST", path: string) {
         const known = [
-          "GET /api/server/environment",
+          "GET /.well-known/t3/environment",
           "POST /api/auth/websocket-ticket",
           "GET /api/auth/session",
-          "GET /api/orchestration/snapshot",
+          "GET /api/orchestration/shell",
           "GET /redirect",
         ];
         if (!known.includes(`${method} ${path}`)) {

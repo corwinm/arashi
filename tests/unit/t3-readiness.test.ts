@@ -18,24 +18,46 @@ afterEach(async () => {
 });
 
 describe("D1 effect-ledger fixture foundation (not readiness acceptance)", () => {
+  test("registers approved public descriptor and authenticated shell routes without admitting task snapshots", async () => {
+    const f = await fixture();
+    f.allowHttp("GET", "/.well-known/t3/environment");
+    f.allowHttp("GET", "/api/orchestration/shell");
+    expect(
+      await t3Http(f.origin, undefined, f.dependencies)("/.well-known/t3/environment"),
+    ).toMatchObject({ environmentId: "environment-1", orchestrationProtocolVersion: 1 });
+    const token = await f.issueOwnedSession();
+    expect(await t3Http(f.origin, token, f.dependencies)("/api/orchestration/shell")).toEqual({
+      projects: [],
+      snapshotSequence: 0,
+      threads: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(() => f.allowHttp("GET", "/api/orchestration/snapshot")).toThrow("unknown route");
+    expect((await fetch(`${f.origin}/api/orchestration/snapshot`)).status).toBe(403);
+    await f.revokeOwnedSession();
+    expect((await f.effects()).filter((e) => e.kind === "http").map((e) => e.path)).toEqual([
+      "/.well-known/t3/environment",
+      "/api/orchestration/shell",
+    ]);
+  });
   test("denies unlisted HTTP paths and methods, even through the real server", async () => {
     const f = await fixture();
-    f.allowHttp("GET", "/api/server/environment");
+    f.allowHttp("GET", "/.well-known/t3/environment");
     expect(
-      (await f.dependencies.fetch!(`${f.origin}/api/server/environment`, { redirect: "error" }))
+      (await f.dependencies.fetch!(`${f.origin}/.well-known/t3/environment`, { redirect: "error" }))
         .status,
     ).toBe(200);
     await expect(
       f.dependencies.fetch!(`${f.origin}/forbidden`, { redirect: "error" }),
     ).rejects.toThrow("denied");
     await expect(
-      f.dependencies.fetch!(`${f.origin}/api/server/environment`, {
+      f.dependencies.fetch!(`${f.origin}/.well-known/t3/environment`, {
         method: "POST",
         redirect: "error",
       }),
     ).rejects.toThrow("denied");
     expect((await fetch(`${f.origin}/forbidden`)).status).toBe(403);
-    expect((await fetch(`${f.origin}/api/server/environment`, { method: "POST" })).status).toBe(
+    expect((await fetch(`${f.origin}/.well-known/t3/environment`, { method: "POST" })).status).toBe(
       403,
     );
     expect((await f.effects()).filter((e) => e.kind === "denied")).toHaveLength(4);
@@ -61,6 +83,7 @@ describe("D1 effect-ledger fixture foundation (not readiness acceptance)", () =>
     const ticket = await t3Http(f.origin, token, f.dependencies)("/api/auth/websocket-ticket", {});
     await f.sendWs(String(ticket.ticket), {
       _tag: "Request",
+      headers: [],
       id: "1",
       payload: {},
       tag: "thread.turn.start",
