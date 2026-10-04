@@ -793,6 +793,12 @@ function admitReadinessCatalog(config: JsonObject, project?: JsonObject): void {
         s.options.some((o) => !object(o) || !text(o.id) || !scalar(o.value)))
     )
       reject();
+    // Multiple values for one saved option cannot establish exact intent.
+    const optionIds = new Set<string>();
+    for (const option of (s.options ?? []) as JsonObject[]) {
+      if (optionIds.has(option.id as string)) reject();
+      optionIds.add(option.id as string);
+    }
   };
   if (!Array.isArray(config.providers) || !object(config.settings)) reject();
   selection(record(config.settings).defaultModelSelection);
@@ -836,6 +842,7 @@ function admitReadinessCatalog(config: JsonObject, project?: JsonObject): void {
         !Array.isArray(capabilities.optionDescriptors)
       )
         reject();
+      const descriptorIds = new Set<string>();
       for (const rawDescriptor of (capabilities.optionDescriptors ?? []) as unknown[]) {
         if (!object(rawDescriptor)) reject();
         const d = rawDescriptor as JsonObject;
@@ -846,8 +853,12 @@ function admitReadinessCatalog(config: JsonObject, project?: JsonObject): void {
             (d.type === "select" ? !text(d.currentValue) : typeof d.currentValue !== "boolean"))
         )
           reject();
+        if (descriptorIds.has(d.id as string)) reject();
+        descriptorIds.add(d.id as string);
         if (d.type === "select") {
           if (!Array.isArray(d.options)) reject();
+          const choiceIds = new Set<string>();
+          let defaults = 0;
           for (const rawChoice of d.options as unknown[]) {
             if (
               !object(rawChoice) ||
@@ -855,7 +866,16 @@ function admitReadinessCatalog(config: JsonObject, project?: JsonObject): void {
               !optionalBoolean(rawChoice, "isDefault")
             )
               reject();
+            const choice = rawChoice as JsonObject;
+            if (choiceIds.has(choice.id as string)) reject();
+            choiceIds.add(choice.id as string);
+            if (choice.isDefault === true) defaults++;
           }
+          if (
+            defaults > 1 ||
+            (Object.hasOwn(d, "currentValue") && !choiceIds.has(d.currentValue as string))
+          )
+            reject();
         }
       }
     }
