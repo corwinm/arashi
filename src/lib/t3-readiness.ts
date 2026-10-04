@@ -15,12 +15,15 @@ import {
   type T3NativeDependencies,
 } from "./t3-native.ts";
 import { T3HandoffError } from "./t3-error.ts";
+import { checkT3Read, runT3Read, t3Now } from "./t3-operation.ts";
 import { resolveT3ReadinessContext, type T3ReadinessContext } from "./t3-readiness-context.ts";
 import type { T3Settings } from "./t3-settings.ts";
 
 const MAX_BYTES = 1024 * 1024;
 const OPERATION_MS = 15_000;
 const reasons = {
+  T3_CHECK_CANCELLED: "check_cancelled",
+  T3_CHECK_TIMEOUT: "check_timeout",
   T3_IDENTITY_CHANGED: "preview_identity_changed",
   T3_AUTHENTICATED_REQUIRED: "explicit_authenticated_required",
   T3_PREVIEW_REQUIRED: "passing_preview_required",
@@ -92,7 +95,7 @@ const previewIdentities = new WeakMap<T3ReadinessPreview, PreviewIdentity>();
 /** Foundation only: call immediately before future owned acquisition, never issue here. */
 export async function recheckT3ReadinessPreview(
   preview: T3ReadinessPreview,
-  options: { authenticated: boolean },
+  options: { authenticated: boolean; signal?: AbortSignal },
   dependencies: T3ReadinessPreviewDependencies = {},
 ): Promise<void> {
   if (options.authenticated !== true) fail("T3_AUTHENTICATED_REQUIRED");
@@ -177,7 +180,7 @@ function readFailure(code: string): never {
  */
 export async function collectT3AuthenticatedReadFoundation(
   preview: T3ReadinessPreview,
-  options: { authenticated: boolean },
+  options: { authenticated: boolean; signal?: AbortSignal },
   dependencies: T3ReadinessPreviewDependencies = {},
 ): Promise<T3OwnedSessionResult<T3AuthenticatedReadFoundation>> {
   const identity = previewIdentities.get(preview);
@@ -185,94 +188,106 @@ export async function collectT3AuthenticatedReadFoundation(
   if (options.authenticated !== true) fail("T3_AUTHENTICATED_REQUIRED");
   if (!identity || preview.readiness !== "preview_passed" || preview.exitCode !== 0)
     fail("T3_PREVIEW_REQUIRED");
-  const native: T3NativeDependencies = {
-    ...dependencies,
-    fetch: boundedReadFetch(dependencies),
-    ...(dependencies.runProcess
-      ? {
-          runProcess: (argv, processOptions) =>
-            bounded(async () => {
-              const output = await dependencies.runProcess!(argv, processOptions);
-              if (
-                Buffer.byteLength(output.stdout) > MAX_BYTES ||
-                Buffer.byteLength(output.stderr) > MAX_BYTES
-              )
-                readFailure("T3_RESPONSE_INVALID");
-              return output;
-            }, "T3_UNREACHABLE"),
-        }
-      : {}),
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  const signals = [options.signal, dependencies.readiness?.signal].filter(
+    (s): s is AbortSignal => !!s,
+  );
+  for (const signal of signals) {
+    signal.addEventListener("abort", cancel, { once: true });
+    if (signal.aborted) cancel();
+  }
+  // Scoped recoverable SIGINT only. Do not exit globally or affect ordinary
+  // handoffs. Repeated SIGINT cannot abort the independent cleanup budget.
+  process.on("SIGINT", cancel);
+  const now = dependencies.readiness?.now ?? t3Now;
+  const control = {
+    now,
+    deadline: Math.min(now() + 90_000, dependencies.readiness?.deadline ?? Infinity),
+    signal: controller.signal,
   };
+  const native: T3NativeDependencies = { ...dependencies, readiness: control };
   const environment = {
     baseDir: identity.baseDir,
     cli: identity.context.settings.cli!,
     origin: identity.origin,
   };
   const cwd = identity.context.checkout ?? identity.cwd;
-  await recheckT3ReadinessPreview(preview, options, dependencies);
-  return withOwnedT3Session(environment, cwd, native, async (request, token) => {
-    const session = await bounded(() => request("/api/auth/session"), "T3_UNREACHABLE");
-    // AuthSessionState exposes NO sessionId/environmentId. The authenticated
-    // method is checked here; environment binding comes from config.environment.
-    if (
-      session.authenticated !== true ||
-      !validAuthDescriptor(session.auth) ||
-      session.sessionMethod !== "bearer-access-token" ||
-      !Array.isArray(session.scopes) ||
-      !session.scopes.every((scope) => typeof scope === "string" && scopes.includes(scope)) ||
-      !session.scopes.includes("orchestration:read") ||
-      (Object.hasOwn(session, "expiresAt") && !timestamp(session.expiresAt))
-    )
-      readFailure("T3_AUTH_FAILED");
-    const config = await readT3Config(identity.origin, token, request, { boundedRead: true });
-    const descriptor = record(config.environment);
-    if (
-      descriptor.environmentId !== identity.environmentId ||
-      descriptor.serverVersion !== identity.serverVersion ||
-      descriptor.orchestrationProtocolVersion !== 1 ||
-      !validAuthDescriptor(config.auth)
-    )
-      readFailure("T3_RESPONSE_INVALID");
-    // Primitive container validation only. No provider classification/defaults.
-    if (
-      !Array.isArray(config.providers) ||
-      !config.settings ||
-      typeof config.settings !== "object" ||
-      Array.isArray(config.settings)
-    )
-      readFailure("T3_RESPONSE_INVALID");
-    let shell: JsonObject | undefined;
-    if (identity.context.checkout) {
-      shell = await bounded(() => request("/api/orchestration/shell"), "T3_UNREACHABLE");
+  try {
+    checkT3Read(control);
+    await recheckT3ReadinessPreview(preview, options, native);
+    checkT3Read(control);
+    return await withOwnedT3Session(environment, cwd, native, async (request, token) => {
+      const session = await request("/api/auth/session");
+      // AuthSessionState exposes NO sessionId/environmentId. The authenticated
+      // method is checked here; environment binding comes from config.environment.
       if (
-        !Number.isSafeInteger(shell.snapshotSequence) ||
-        (shell.snapshotSequence as number) < 0 ||
-        !timestamp(shell.updatedAt) ||
-        !Array.isArray(shell.projects) ||
-        !Array.isArray(shell.threads)
+        session.authenticated !== true ||
+        !validAuthDescriptor(session.auth) ||
+        session.sessionMethod !== "bearer-access-token" ||
+        !Array.isArray(session.scopes) ||
+        !session.scopes.every((scope) => typeof scope === "string" && scopes.includes(scope)) ||
+        !session.scopes.includes("orchestration:read") ||
+        (Object.hasOwn(session, "expiresAt") && !timestamp(session.expiresAt))
+      )
+        readFailure("T3_AUTH_FAILED");
+      const config = await readT3Config(identity.origin, token, request, {
+        boundedRead: true,
+        readiness: control,
+      });
+      const descriptor = record(config.environment);
+      if (
+        descriptor.environmentId !== identity.environmentId ||
+        descriptor.serverVersion !== identity.serverVersion ||
+        descriptor.orchestrationProtocolVersion !== 1 ||
+        !validAuthDescriptor(config.auth)
       )
         readFailure("T3_RESPONSE_INVALID");
-      // Identity-bearing primitive shells only, not project/default matching.
-      for (const project of shell.projects) {
-        const value = record(project);
-        if (!identifier(value.id) || !text(value.workspaceRoot)) readFailure("T3_RESPONSE_INVALID");
-      }
-      for (const thread of shell.threads) {
-        const value = record(thread);
-        if (!identifier(value.id) || !identifier(value.projectId))
+      // Primitive container validation only. No provider classification/defaults.
+      if (
+        !Array.isArray(config.providers) ||
+        !config.settings ||
+        typeof config.settings !== "object" ||
+        Array.isArray(config.settings)
+      )
+        readFailure("T3_RESPONSE_INVALID");
+      let shell: JsonObject | undefined;
+      if (identity.context.checkout) {
+        shell = await request("/api/orchestration/shell");
+        if (
+          !Number.isSafeInteger(shell.snapshotSequence) ||
+          (shell.snapshotSequence as number) < 0 ||
+          !timestamp(shell.updatedAt) ||
+          !Array.isArray(shell.projects) ||
+          !Array.isArray(shell.threads)
+        )
           readFailure("T3_RESPONSE_INVALID");
+        // Identity-bearing primitive shells only, not project/default matching.
+        for (const project of shell.projects) {
+          const value = record(project);
+          if (!identifier(value.id) || !text(value.workspaceRoot))
+            readFailure("T3_RESPONSE_INVALID");
+        }
+        for (const thread of shell.threads) {
+          const value = record(thread);
+          if (!identifier(value.id) || !identifier(value.projectId))
+            readFailure("T3_RESPONSE_INVALID");
+        }
       }
-    }
-    const value: T3AuthenticatedReadFoundation = {
-      authentication: "verified",
-      authority: "administrative",
-      catalog: "read",
-      project: shell ? "deferred" : "not_applicable",
-      effectiveSelection: "deferred",
-    };
-    authenticatedReads.set(value, { config, shell });
-    return value;
-  });
+      const value: T3AuthenticatedReadFoundation = {
+        authentication: "verified",
+        authority: "administrative",
+        catalog: "read",
+        project: shell ? "deferred" : "not_applicable",
+        effectiveSelection: "deferred",
+      };
+      authenticatedReads.set(value, { config, shell });
+      return value;
+    });
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    for (const signal of signals) signal.removeEventListener("abort", cancel);
+  }
 }
 
 function fail(code: Code): never {
@@ -436,57 +451,61 @@ async function collectPreview(
           }
         : {}),
       readRuntime: (path) =>
-        bounded(async () => {
-          let text: string;
-          try {
-            text = await (dependencies.readRuntime ?? readBoundedFile)(path);
-          } catch (error) {
-            if (error instanceof T3HandoffError) throw error;
-            return fail("T3_ENVIRONMENT_MISSING");
-          }
-          if (Buffer.byteLength(text) > MAX_BYTES) fail("T3_DISCOVERY_INVALID");
-          let runtime: ReturnType<typeof record>;
-          try {
-            runtime = record(JSON.parse(text));
-          } catch {
-            return fail("T3_DISCOVERY_INVALID");
-          }
-          if (
-            runtime.version !== 1 ||
-            !Number.isSafeInteger(runtime.pid) ||
-            (runtime.pid as number) < 1 ||
-            !Number.isSafeInteger(runtime.port) ||
-            (runtime.port as number) < 1 ||
-            (runtime.port as number) > 65535 ||
-            typeof runtime.origin !== "string"
-          )
-            fail("T3_DISCOVERY_INVALID");
-          let url: URL;
-          try {
-            url = new URL(runtime.origin);
-          } catch {
-            return fail("T3_DISCOVERY_INVALID");
-          }
-          if (
-            url.protocol !== "http:" ||
-            !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
-            url.username ||
-            url.password ||
-            url.search ||
-            url.hash ||
-            url.pathname !== "/" ||
-            Number(url.port) !== runtime.port
-          )
-            fail("T3_DISCOVERY_INVALID");
-          try {
-            (dependencies.probePid ?? ((pid) => process.kill(pid, 0)))(runtime.pid as number);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EPERM") fail("T3_ENVIRONMENT_STALE");
-          }
-          runtimePid = runtime.pid as number;
-          return text;
-        }, "T3_UNREACHABLE"),
-      fetch: boundedReadFetch(dependencies),
+        (dependencies.readiness
+          ? (operation: () => Promise<string>) => runT3Read(dependencies.readiness!, operation)
+          : (operation: () => Promise<string>) => bounded(operation, "T3_UNREACHABLE"))(
+          async () => {
+            let text: string;
+            try {
+              text = await (dependencies.readRuntime ?? readBoundedFile)(path);
+            } catch (error) {
+              if (error instanceof T3HandoffError) throw error;
+              return fail("T3_ENVIRONMENT_MISSING");
+            }
+            if (Buffer.byteLength(text) > MAX_BYTES) fail("T3_DISCOVERY_INVALID");
+            let runtime: ReturnType<typeof record>;
+            try {
+              runtime = record(JSON.parse(text));
+            } catch {
+              return fail("T3_DISCOVERY_INVALID");
+            }
+            if (
+              runtime.version !== 1 ||
+              !Number.isSafeInteger(runtime.pid) ||
+              (runtime.pid as number) < 1 ||
+              !Number.isSafeInteger(runtime.port) ||
+              (runtime.port as number) < 1 ||
+              (runtime.port as number) > 65535 ||
+              typeof runtime.origin !== "string"
+            )
+              fail("T3_DISCOVERY_INVALID");
+            let url: URL;
+            try {
+              url = new URL(runtime.origin);
+            } catch {
+              return fail("T3_DISCOVERY_INVALID");
+            }
+            if (
+              url.protocol !== "http:" ||
+              !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+              url.username ||
+              url.password ||
+              url.search ||
+              url.hash ||
+              url.pathname !== "/" ||
+              Number(url.port) !== runtime.port
+            )
+              fail("T3_DISCOVERY_INVALID");
+            try {
+              (dependencies.probePid ?? ((pid) => process.kill(pid, 0)))(runtime.pid as number);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "EPERM") fail("T3_ENVIRONMENT_STALE");
+            }
+            runtimePid = runtime.pid as number;
+            return text;
+          },
+        ),
+      fetch: dependencies.readiness ? dependencies.fetch : boundedReadFetch(dependencies),
     };
     result.facts.cliVersion = await bounded(
       () =>
@@ -512,7 +531,11 @@ async function collectPreview(
     };
     let discovered: Awaited<ReturnType<typeof discoverT3Environment>>;
     try {
-      discovered = await discoverT3Environment(context.settings, native);
+      discovered = dependencies.readiness
+        ? await runT3Read(dependencies.readiness, () =>
+            discoverT3Environment(context.settings, native),
+          )
+        : await discoverT3Environment(context.settings, native);
     } catch (error) {
       throw runtimeError ?? error;
     }
