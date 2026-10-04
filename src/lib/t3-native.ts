@@ -267,69 +267,154 @@ export async function readT3Config(
   });
 }
 
+/** Internal lifecycle evidence, not public diagnostic output. No credential/ID is retained. */
+export interface T3OwnedSessionResult<T> {
+  use: { status: "not_attempted" | "failed" } | { status: "succeeded"; value: T };
+  failure?: T3HandoffError;
+  cleanup: { status: "unknown" | "failed"; revoke: "not_attempted" | "succeeded" | "failed" };
+}
+
+// Legacy policy deliberately does not salvage malformed acquisition: ordinary
+// handoff must retain its historical effects as well as its error precedence.
+async function ownedT3SessionLifecycle<T>(
+  environment: Pick<T3NativeEnvironment, "baseDir" | "cli" | "origin">,
+  cwd: string,
+  dependencies: T3NativeDependencies,
+  use: (request: ReturnType<typeof t3Http>, token: string) => Promise<T>,
+  legacy: boolean,
+): Promise<{ evidence: T3OwnedSessionResult<T>; failure?: unknown; issueFailed: boolean }> {
+  const run = dependencies.runProcess ?? runProcess;
+  const options = { cwd, env: nativeChildEnvironment({ T3CODE_HOME: environment.baseDir }) };
+  const evidence: T3OwnedSessionResult<T> = {
+    use: { status: "not_attempted" },
+    cleanup: { status: "unknown", revoke: "not_attempted" },
+  };
+  let session: JsonObject = {};
+  let issueSucceeded = false;
+  let failure: unknown;
+  try {
+    const issued = await run(
+      [
+        environment.cli,
+        "auth",
+        "session",
+        "issue",
+        "--base-dir",
+        environment.baseDir,
+        "--ttl",
+        "5m",
+        "--label",
+        legacy ? "Arashi handoff" : "Arashi readiness",
+        "--json",
+      ],
+      options,
+    );
+    try {
+      session = record(JSON.parse(issued.stdout));
+    } catch {
+      throw new T3HandoffError(
+        "T3_AUTH_FAILED",
+        "Official T3 session issuance failed. Verify --t3-cli and --t3-base-dir point to matching compatible CLI/server components.",
+      );
+    }
+    issueSucceeded =
+      issued.exitCode === 0 &&
+      identifier(session.sessionId) !== null &&
+      typeof session.token === "string" &&
+      session.token.length > 0;
+    if (!issueSucceeded)
+      throw new T3HandoffError("T3_AUTH_FAILED", "Official T3 session issuance failed.");
+  } catch (error) {
+    failure = error;
+    evidence.failure = new T3HandoffError("T3_AUTH_FAILED", "Official T3 session issuance failed.");
+  }
+  const sessionId = identifier(session.sessionId);
+  if (issueSucceeded) {
+    try {
+      evidence.use = {
+        status: "succeeded",
+        value: await use(
+          t3Http(environment.origin, session.token as string, dependencies),
+          session.token as string,
+        ),
+      };
+    } catch (error) {
+      evidence.use = { status: "failed" };
+      failure = error;
+      // Callback errors may carry credentials in messages/details/results. Only
+      // known native read failure codes cross the structured evidence boundary;
+      // the raw error stays private for the compatibility wrapper.
+      const readFailureCodes = [
+        "T3_AUTH_FAILED",
+        "T3_AUTH_UNSUPPORTED",
+        "T3_HTTP_FAILED",
+        "T3_UNREACHABLE",
+        "T3_RESPONSE_INVALID",
+        "T3_CATALOG_UNAVAILABLE",
+        "T3_CATALOG_INVALID",
+        "T3_PROVIDER_AMBIGUOUS",
+        "T3_MODEL_UNAVAILABLE",
+        "T3_OPTIONS_UNSUPPORTED",
+        "T3_EFFORT_UNSUPPORTED",
+      ];
+      evidence.failure = new T3HandoffError(
+        error instanceof T3HandoffError && readFailureCodes.includes(error.code)
+          ? error.code
+          : "T3_HANDOFF_FAILED",
+        "The official T3 request failed. Verify compatibility and reconcile pending handoffs.",
+      );
+    }
+  }
+  // Only the exact strict ID from this issue response is attributable. Never
+  // infer it from stderr, exceptions, token text or a list of other sessions.
+  if (sessionId && (issueSucceeded || !legacy)) {
+    try {
+      const revoked = await run(
+        [
+          environment.cli,
+          "auth",
+          "session",
+          "revoke",
+          sessionId,
+          "--base-dir",
+          environment.baseDir,
+        ],
+        options,
+      );
+      evidence.cleanup =
+        revoked.exitCode === 0
+          ? { status: "unknown", revoke: "succeeded" }
+          : { status: "failed", revoke: "failed" };
+    } catch {
+      evidence.cleanup = { status: "failed", revoke: "failed" };
+    }
+  }
+  // Exit zero acknowledges revoke only; exact absence verification is a later
+  // foundation. This primitive never certifies cleanup or a total time budget.
+  return { evidence, failure, issueFailed: !issueSucceeded };
+}
+
+export async function withOwnedT3Session<T>(
+  environment: Pick<T3NativeEnvironment, "baseDir" | "cli" | "origin">,
+  cwd: string,
+  dependencies: T3NativeDependencies,
+  use: (request: ReturnType<typeof t3Http>, token: string) => Promise<T>,
+): Promise<T3OwnedSessionResult<T>> {
+  return (await ownedT3SessionLifecycle(environment, cwd, dependencies, use, false)).evidence;
+}
+
 export async function withT3Session<T>(
   environment: Pick<T3NativeEnvironment, "baseDir" | "cli" | "origin">,
   cwd: string,
   dependencies: T3NativeDependencies,
   use: (request: ReturnType<typeof t3Http>, token: string) => Promise<T>,
 ): Promise<T> {
-  const run = dependencies.runProcess ?? runProcess;
-  const options = { cwd, env: nativeChildEnvironment({ T3CODE_HOME: environment.baseDir }) };
-  const issued = await run(
-    [
-      environment.cli,
-      "auth",
-      "session",
-      "issue",
-      "--base-dir",
-      environment.baseDir,
-      "--ttl",
-      "5m",
-      "--label",
-      "Arashi handoff",
-      "--json",
-    ],
-    options,
-  );
-  let session: JsonObject;
-  try {
-    session = record(JSON.parse(issued.stdout));
-  } catch {
-    return fail(
-      "T3_AUTH_FAILED",
-      "Official T3 session issuance failed. Verify --t3-cli and --t3-base-dir point to matching compatible CLI/server components.",
-    );
-  }
-  const sessionId = identifier(session.sessionId);
-  if (issued.exitCode !== 0 || !sessionId || typeof session.token !== "string" || !session.token)
-    return fail("T3_AUTH_FAILED", "Official T3 session issuance failed.");
-  let outcome: T | undefined;
-  let failure: unknown;
-  try {
-    outcome = await use(t3Http(environment.origin, session.token, dependencies), session.token);
-  } catch (error) {
-    failure = error;
-  }
-  let revoked = false;
-  try {
-    revoked =
-      (
-        await run(
-          [
-            environment.cli,
-            "auth",
-            "session",
-            "revoke",
-            sessionId,
-            "--base-dir",
-            environment.baseDir,
-          ],
-          options,
-        )
-      ).exitCode === 0;
-  } catch {
-    /* Short-lived credential expires independently. */
-  }
+  const lifecycle = await ownedT3SessionLifecycle(environment, cwd, dependencies, use, true);
+  if (lifecycle.issueFailed) throw lifecycle.failure;
+  const failure = lifecycle.failure;
+  const outcome =
+    lifecycle.evidence.use.status === "succeeded" ? lifecycle.evidence.use.value : undefined;
+  const revoked = lifecycle.evidence.cleanup.revoke === "succeeded";
   if (!revoked) {
     const cleanup = new T3HandoffError(
       "T3_AUTH_CLEANUP_FAILED",
