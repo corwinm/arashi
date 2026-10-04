@@ -39,17 +39,184 @@ const body = (fields: object = {}) =>
     expiresAt: "2026-10-04T12:00:00Z",
     ...fields,
   });
-function runner(stdout: string, exitCode = 0, revoke: number | Error = 0) {
+// Pinned official cliAuthFormat.ts formatSessionList: array, no `current` field.
+const active = (fields: object = {}) => ({
+  sessionId: "unrelated-session",
+  method: "bearer-access-token",
+  scopes: ["orchestration:read"],
+  subject: "PRIVATE_SUBJECT",
+  client: { deviceType: "bot", label: "PRIVATE_LABEL" },
+  connected: false,
+  issuedAt: "2026-10-04T11:00:00.000Z",
+  expiresAt: "2026-10-04T12:00:00.000Z",
+  lastConnectedAt: null,
+  ...fields,
+});
+function runner(
+  stdout: string,
+  exitCode = 0,
+  revoke: number | Error = 0,
+  list: string | Error = "[]",
+  listExit = 0,
+  listStderr = "PRIVATE_STDERR",
+) {
   const commands: string[][] = [];
   const runProcess: NonNullable<native.T3NativeDependencies["runProcess"]> = async (command) => {
     commands.push([...command]);
     if (command.includes("issue")) return { stdout, exitCode, stderr: "PRIVATE_STDERR" };
+    if (command.includes("list")) {
+      if (list instanceof Error) throw list;
+      return { stdout: list, exitCode: listExit, stderr: listStderr };
+    }
     if (revoke instanceof Error) throw revoke;
     return { stdout: "", stderr: "PRIVATE_STDERR", exitCode: revoke };
   };
   return { commands, runProcess };
 }
 describe("owned session foundation", () => {
+  test.each([
+    ["exact absent", "[]", "verified"],
+    [
+      "unrelated sessions",
+      JSON.stringify([
+        active(),
+        active({ sessionId: "another-session", method: "browser-session-cookie" }),
+      ]),
+      "verified",
+    ],
+    ["exit zero still active", JSON.stringify([active({ sessionId: "owned-session" })]), "failed"],
+    [
+      "target plus unrelated",
+      JSON.stringify([active(), active({ sessionId: "owned-session" })]),
+      "failed",
+    ],
+  ])("A15 %s", async (_name, list, status) => {
+    const fixture = runner(body(), 0, 0, list);
+    const result = await owned(nativeEnvironment(), ".", fixture, async () => "observed");
+    expect(result.use).toEqual({ status: "succeeded", value: "observed" });
+    expect(result.cleanup).toEqual({ status, revoke: "succeeded" });
+    expect(fixture.commands.map((command) => command[3])).toEqual(["issue", "revoke", "list"]);
+    expect(fixture.commands[2]).toEqual([
+      "t3",
+      "auth",
+      "session",
+      "list",
+      "--base-dir",
+      "/t3",
+      "--json",
+    ]);
+    expect(fixture.commands.filter((command) => command.includes("revoke"))).toHaveLength(1);
+    expect(fixture.commands.flat()).not.toContain("FIXTURE_SECRET");
+    expect(fixture.commands.flat()).not.toContain("unrelated-session");
+    expect(JSON.stringify(result)).not.toMatch(
+      /FIXTURE_SECRET|PRIVATE_|owned-session|unrelated-session|another-session/,
+    );
+  });
+  const invalidEntries: [string, unknown][] = [
+    ["null entry", null],
+    ["array entry", []],
+    ["scalar entry", 1],
+    ["missing ID", active({ sessionId: undefined })],
+    ["object ID", active({ sessionId: {} })],
+    ["array ID", active({ sessionId: ["unrelated-session"] })],
+    ["unsafe ID", active({ sessionId: "--all" })],
+    ["empty ID", active({ sessionId: "" })],
+    ["number ID", active({ sessionId: 1 })],
+    ["array method", active({ method: ["bearer-access-token"] })],
+    ["unknown method", active({ method: "invalid" })],
+    ["missing method", active({ method: undefined })],
+    ["scalar scopes", active({ scopes: "orchestration:read" })],
+    ["object scope", active({ scopes: [{}] })],
+    ["unknown scope", active({ scopes: ["invalid"] })],
+    ["missing scopes", active({ scopes: undefined })],
+    ["array subject", active({ subject: ["private"] })],
+    ["empty subject", active({ subject: "" })],
+    ["array client", active({ client: [] })],
+    ["missing client", active({ client: undefined })],
+    ["bad device", active({ client: { deviceType: [] } })],
+    ["bad label", active({ client: { deviceType: "bot", label: {} } })],
+    ...["ipAddress", "userAgent", "os", "browser"].map((field): [string, unknown] => [
+      "bad client " + field,
+      active({ client: { deviceType: "bot", [field]: [] } }),
+    ]),
+    ["array connected", active({ connected: [false] })],
+    ["missing connected", active({ connected: undefined })],
+    ["array issuedAt", active({ issuedAt: [] })],
+    ["invalid issuedAt", active({ issuedAt: "not-date" })],
+    ["missing issuedAt", active({ issuedAt: undefined })],
+    ["object expiresAt", active({ expiresAt: {} })],
+    ["invalid expiresAt", active({ expiresAt: "2026-02-30T12:00:00.000Z" })],
+    ["array lastConnectedAt", active({ lastConnectedAt: [] })],
+    ["missing lastConnectedAt", active({ lastConnectedAt: undefined })],
+  ];
+  test.each([
+    ["object envelope", '{"sessions":[]}'],
+    ["null", "null"],
+    ["boolean", "true"],
+    ["number", "1"],
+    ["string", '"[]"'],
+    ["malformed JSON", "["],
+    ["duplicate IDs", JSON.stringify([active(), active()])],
+    ["oversize ASCII", "[]" + " ".repeat(1024 * 1024)],
+    ["oversize UTF8", JSON.stringify([active({ subject: "é".repeat(600_000) })])],
+    ...invalidEntries.map(([name, entry]) => [
+      name,
+      JSON.stringify([active({ sessionId: "valid-first" }), entry]),
+    ]),
+    ["target before invalid entry", JSON.stringify([active({ sessionId: "owned-session" }), null])],
+  ])("A15 invalid list %s", async (_name, list) => {
+    const fixture = runner(body(), 0, 0, list);
+    const result = await owned(nativeEnvironment(), ".", fixture, async () => true);
+    expect(result.use).toEqual({ status: "succeeded", value: true });
+    expect(result.cleanup).toEqual({ status: "unknown", revoke: "succeeded" });
+    expect(fixture.commands.map((command) => command[3])).toEqual(["issue", "revoke", "list"]);
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|owned-session|unrelated-session/);
+  });
+  test.each([
+    ["nonzero", "[]", 1, "private"],
+    ["timeout", new Error("timeout PRIVATE_STDERR"), 0, ""],
+    ["spawn throw", new Error("spawn PRIVATE_STDERR"), 0, ""],
+    ["stderr oversized", "[]", 0, "x".repeat(1024 * 1024 + 1)],
+  ])("A15 list %s", async (_name, list, exitCode, stderr) => {
+    const fixture = runner(body(), 0, 0, list, exitCode, stderr);
+    const result = await owned(nativeEnvironment(), ".", fixture, async () => {
+      throw new T3HandoffError("T3_RESPONSE_INVALID", "private");
+    });
+    expect(result.use.status).toBe("failed");
+    expect(result.failure?.code).toBe("T3_RESPONSE_INVALID");
+    expect(result.cleanup).toEqual({ status: "unknown", revoke: "succeeded" });
+    expect(fixture.commands).toHaveLength(3);
+  });
+  test.each([1, new Error("PRIVATE_STDERR")])(
+    "A15 failed revoke remains failed despite absence %s",
+    async (revoke) => {
+      const fixture = runner(body(), 0, revoke, "[]");
+      const result = await owned(nativeEnvironment(), ".", fixture, async () => true);
+      expect(result.cleanup).toEqual({ status: "failed", revoke: "failed" });
+      expect(fixture.commands.map((command) => command[3])).toEqual(["issue", "revoke", "list"]);
+    },
+  );
+  test("A15 legacy success performs no verification, even if list would fail", async () => {
+    const fixture = runner(body(), 0, 0, new Error("must not list"));
+    await expect(
+      native.withT3Session(nativeEnvironment(), ".", fixture, async () => undefined),
+    ).resolves.toBeUndefined();
+    expect(fixture.commands.map((command) => command[3])).toEqual(["issue", "revoke"]);
+    const error = new Error("raw issue failure");
+    await expect(
+      native.withT3Session(
+        nativeEnvironment(),
+        ".",
+        {
+          runProcess: async () => {
+            throw error;
+          },
+        },
+        async () => true,
+      ),
+    ).rejects.toBe(error);
+  });
+
   test("preserves successful use independently when revoke fails", async () => {
     const fixture = runner(body(), 0, 1);
     const result = await owned(nativeEnvironment(), ".", fixture, async () => "observed");
@@ -63,7 +230,7 @@ describe("owned session foundation", () => {
       uses++;
     });
     expect(uses).toBe(0);
-    expect(fixture.commands.at(-1)).toEqual([
+    expect(fixture.commands.find((command) => command.includes("revoke"))).toEqual([
       "t3",
       "auth",
       "session",
@@ -97,13 +264,15 @@ describe("owned session foundation", () => {
     expect(result.use.status).toBe("not_attempted");
     expect(result.failure).toMatchObject({ code: "T3_AUTH_FAILED" });
     expect(result.cleanup).toEqual({
-      status: "unknown",
+      status: cleanup ? "verified" : "unknown",
       revoke: cleanup ? "succeeded" : "not_attempted",
     });
     expect(fixture.commands.filter((command) => command.includes("revoke"))).toHaveLength(
       cleanup ? 1 : 0,
     );
-    expect(fixture.commands.flat()).not.toContain("list");
+    expect(fixture.commands.filter((command) => command.includes("list"))).toHaveLength(
+      cleanup ? 1 : 0,
+    );
     expect(JSON.stringify(result)).not.toMatch(/FIXTURE_SECRET|PRIVATE_STDERR|owned-session/);
   });
   test.each(["spawn failure", "timeout"])(
@@ -139,7 +308,7 @@ describe("owned session foundation", () => {
       expect(result.use.status).toBe("failed");
       expect(result.failure).toMatchObject({ code: "T3_RESPONSE_INVALID" });
       expect(result.cleanup).toEqual({
-        status: revoke === 0 ? "unknown" : "failed",
+        status: revoke === 0 ? "verified" : "failed",
         revoke: revoke === 0 ? "succeeded" : "failed",
       });
     },
@@ -147,7 +316,7 @@ describe("owned session foundation", () => {
   test("undefined successful value is not a failed use", async () => {
     const result = await owned(nativeEnvironment(), ".", runner(body()), async () => undefined);
     expect(result.use).toEqual({ status: "succeeded", value: undefined });
-    expect(result.cleanup).toEqual({ status: "unknown", revoke: "succeeded" });
+    expect(result.cleanup).toEqual({ status: "verified", revoke: "succeeded" });
   });
   test("legacy wrapper preserves label, malformed issuance effects and cleanup error precedence", async () => {
     const invalid = runner(body({ token: {} }));
@@ -196,13 +365,13 @@ describe("owned session foundation", () => {
     const ledger = join(root, "ledger.jsonl");
     await writeFile(
       cli,
-      `#!${process.execPath}\nconst fs = require('node:fs'); const a = process.argv.slice(2); const base = ${JSON.stringify(root)}; if (process.env.T3CODE_HOME !== base || process.env.ARASHI_DIRECTIVE_FILE || process.cwd() !== base) process.exit(9); const issue = ['auth','session','issue','--base-dir',base,'--ttl','5m','--label','Arashi readiness','--json']; const revoke = ['auth','session','revoke','owned-session','--base-dir',base]; if (JSON.stringify(a)!==JSON.stringify(issue) && JSON.stringify(a)!==JSON.stringify(revoke)) process.exit(8); fs.appendFileSync(${JSON.stringify(ledger)}, JSON.stringify({ operation:a[2], cwdBound:true, profileBound:true })+'\\n'); if (a[2]==='issue') console.log(${JSON.stringify(body())});\n`,
+      `#!${process.execPath}\nconst fs = require('node:fs'); const a = process.argv.slice(2); const base = ${JSON.stringify(root)}; if (process.env.T3CODE_HOME !== base || process.env.ARASHI_DIRECTIVE_FILE || process.cwd() !== base) process.exit(9); const issue = ['auth','session','issue','--base-dir',base,'--ttl','5m','--label','Arashi readiness','--json']; const revoke = ['auth','session','revoke','owned-session','--base-dir',base]; const list = ['auth','session','list','--base-dir',base,'--json']; if (JSON.stringify(a)!==JSON.stringify(issue) && JSON.stringify(a)!==JSON.stringify(revoke) && JSON.stringify(a)!==JSON.stringify(list)) process.exit(8); fs.appendFileSync(${JSON.stringify(ledger)}, JSON.stringify({ operation:a[2], cwdBound:true, profileBound:true })+'\\n'); if (a[2]==='issue') console.log(${JSON.stringify(body())}); if (a[2]==='list') console.log(${JSON.stringify(JSON.stringify([active()]))});\n`,
     );
     await chmod(cli, 0o700);
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     for (const args of [
-      ["auth", "session", "list", "--base-dir", root, "--json"],
+      ["auth", "session", "list", "--base-dir", root, "--json", "FIXTURE_SECRET"],
       ["auth", "session", "revoke", "unrelated-session", "--base-dir", root],
     ]) {
       await expect(
@@ -238,14 +407,14 @@ describe("owned session foundation", () => {
         async (request) => (await request("/fixture-read")).observed,
       );
       expect(result.use).toEqual({ status: "succeeded", value: true });
-      expect(result.cleanup).toEqual({ status: "unknown", revoke: "succeeded" });
+      expect(result.cleanup).toEqual({ status: "verified", revoke: "succeeded" });
       expect(reads).toBe(1);
       expect(
         (await readFile(ledger, "utf8"))
           .trim()
           .split("\n")
           .map((line) => JSON.parse(line).operation),
-      ).toEqual(["issue", "revoke"]);
+      ).toEqual(["issue", "revoke", "list"]);
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

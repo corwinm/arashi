@@ -271,7 +271,89 @@ export async function readT3Config(
 export interface T3OwnedSessionResult<T> {
   use: { status: "not_attempted" | "failed" } | { status: "succeeded"; value: T };
   failure?: T3HandoffError;
-  cleanup: { status: "unknown" | "failed"; revoke: "not_attempted" | "succeeded" | "failed" };
+  cleanup: {
+    status: "verified" | "unknown" | "failed";
+    revoke: "not_attempted" | "succeeded" | "failed";
+  };
+}
+
+const sessionListString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.trim() === value;
+const sessionListTimestamp = (value: unknown): boolean => {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
+  )
+    return false;
+  const time = Date.parse(value);
+  return (
+    Number.isFinite(time) &&
+    new Date(time).toISOString() === (value.includes(".") ? value : value.replace("Z", ".000Z"))
+  );
+};
+
+/** Official CLI formatSessionList emits active records, not an HTTP envelope.
+ * Validate the entire list before using even one identity; retain no records.
+ */
+function exactSessionAbsence(
+  output: T3ProcessResult,
+  sessionId: string,
+): "absent" | "active" | "unknown" {
+  if (
+    output.exitCode !== 0 ||
+    typeof output.stdout !== "string" ||
+    typeof output.stderr !== "string" ||
+    Buffer.byteLength(output.stdout, "utf8") > 1024 * 1024 ||
+    Buffer.byteLength(output.stderr, "utf8") > 1024 * 1024
+  )
+    return "unknown";
+  try {
+    const entries: unknown = JSON.parse(output.stdout);
+    if (!Array.isArray(entries)) return "unknown";
+    const ids = new Set<string>();
+    const methods = ["browser-session-cookie", "bearer-access-token", "dpop-access-token"];
+    const scopes = [
+      "orchestration:read",
+      "orchestration:operate",
+      "terminal:operate",
+      "review:write",
+      "relay:read",
+      "relay:write",
+      "access:read",
+      "access:write",
+    ];
+    for (const entry of entries) {
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return "unknown";
+      const session = entry as JsonObject;
+      const id = identifier(session.sessionId);
+      const client = record(session.client);
+      if (
+        !id ||
+        ids.has(id) ||
+        typeof session.method !== "string" ||
+        !methods.includes(session.method) ||
+        !Array.isArray(session.scopes) ||
+        !session.scopes.every(
+          (scope: unknown) => typeof scope === "string" && scopes.includes(scope),
+        ) ||
+        !sessionListString(session.subject) ||
+        typeof client.deviceType !== "string" ||
+        !["desktop", "mobile", "tablet", "bot", "unknown"].includes(client.deviceType) ||
+        ["label", "ipAddress", "userAgent", "os", "browser"].some(
+          (key) => key in client && !sessionListString(client[key]),
+        ) ||
+        typeof session.connected !== "boolean" ||
+        !sessionListTimestamp(session.issuedAt) ||
+        !sessionListTimestamp(session.expiresAt) ||
+        (session.lastConnectedAt !== null && !sessionListTimestamp(session.lastConnectedAt))
+      )
+        return "unknown";
+      ids.add(id);
+    }
+    return ids.has(sessionId) ? "active" : "absent";
+  } catch {
+    return "unknown";
+  }
 }
 
 // Legacy policy deliberately does not salvage malformed acquisition: ordinary
@@ -388,9 +470,37 @@ async function ownedT3SessionLifecycle<T>(
     } catch {
       evidence.cleanup = { status: "failed", revoke: "failed" };
     }
+    if (!legacy) {
+      // One read after the one attributable revoke attempt, with identical
+      // selected profile/CWD. Failure cannot be erased by subsequent absence.
+      let verification: "absent" | "active" | "unknown" = "unknown";
+      try {
+        verification = exactSessionAbsence(
+          await run(
+            [
+              environment.cli,
+              "auth",
+              "session",
+              "list",
+              "--base-dir",
+              environment.baseDir,
+              "--json",
+            ],
+            options,
+          ),
+          sessionId,
+        );
+      } catch {
+        // Keep process output/errors private and preserve independent use evidence.
+      }
+      if (evidence.cleanup.revoke === "succeeded") {
+        evidence.cleanup.status =
+          verification === "absent" ? "verified" : verification === "active" ? "failed" : "unknown";
+      }
+    }
   }
-  // Exit zero acknowledges revoke only; exact absence verification is a later
-  // foundation. This primitive never certifies cleanup or a total time budget.
+  // Verification is readiness-only; this foundation does not certify a total
+  // deadline, cancellation/crash cleanup, or authenticated command readiness.
   return { evidence, failure, issueFailed: !issueSucceeded };
 }
 
