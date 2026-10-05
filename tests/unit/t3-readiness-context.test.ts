@@ -536,6 +536,8 @@ describe("readiness authority and bounded effects A03 A25", () => {
     const child = join(linked, "repos/child");
     await mkdir(child, { recursive: true });
     await git(["init", "-b", "main"], child);
+    await git(["config", "user.name", "T3 readiness fixture"], child);
+    await git(["config", "user.email", "t3-readiness@example.invalid"], child);
     await git(["commit", "--allow-empty", "-m", "child"], child);
     const result = await context({ cwd: child });
     expect(result.checkout).toBe(child);
