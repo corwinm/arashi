@@ -277,7 +277,13 @@ async function matchProject(
     if (!id || ids.has(id) || !text(project.workspaceRoot) || !isAbsolute(project.workspaceRoot))
       readFailure("T3_RESPONSE_INVALID");
     ids.add(id);
-    if (await projectUsesWorkspace(project.workspaceRoot, physical)) matches.push(project);
+    // Shell projects omit deletedAt; full snapshots carry null for active projects.
+    // Neither an advertised deletion nor a falsey deletion string is active evidence.
+    if (
+      (project.deletedAt === undefined || project.deletedAt === null) &&
+      (await projectUsesWorkspace(project.workspaceRoot, physical))
+    )
+      matches.push(project);
   }
   if (matches.length > 1) readFailure("T3_RESPONSE_INVALID");
   const project = matches[0];

@@ -6,10 +6,12 @@ import { expect, test } from "vitest";
 import {
   collectT3ReadinessPreview,
   collectT3AuthenticatedReadFoundation,
+  resolveT3ReadinessEffectiveSelection,
 } from "../../src/lib/t3-readiness.ts";
 import { resolveT3ReadinessContext } from "../../src/lib/t3-readiness-context.ts";
 import { nativeChildEnvironment } from "../../src/lib/t3-native.ts";
 import { createReadinessFixture } from "../helpers/t3-readiness-fixture.ts";
+import { nativeConfig } from "../helpers/t3-native.ts";
 
 const date = "2026-01-01T00:00:00.000Z";
 const auth = {
@@ -100,6 +102,17 @@ async function exercise(
       projects.unshift(project(join(f.root, "absent"), { id: "other" }));
     if (kind === "ambiguous") projects.push(project(alias, { id: "other" }));
     if (kind === "duplicate-id") projects.push(project(f.root));
+    const activeDefaults = {
+      instanceId: "codex",
+      model: "catalog-default",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    if (kind === "deleted-replacement")
+      projects.push(
+        project(alias, { id: "active", deletedAt: null, defaultModelSelection: activeDefaults }),
+      );
+    if (kind === "active-defaults")
+      projects = [project(checkout, { ...change, defaultModelSelection: activeDefaults })];
     if (kind === "identity-alias")
       projects = [
         project(checkout, {
@@ -135,7 +148,16 @@ async function exercise(
         sessionMethod: "bearer-access-token",
         scopes: ["orchestration:read"],
       },
-      catalog: { environment: descriptor, auth, providers: [], settings: {} },
+      catalog: {
+        ...nativeConfig(),
+        providers: nativeConfig().providers.map((provider) => ({
+          ...provider,
+          checkedAt: date,
+          version: null,
+        })),
+        environment: descriptor,
+        auth,
+      },
       shell: {
         snapshotSequence: 0,
         projects,
@@ -207,6 +229,26 @@ async function exercise(
         status: "succeeded",
         value: { project: expected, effectiveSelection: "deferred" },
       });
+      if (kind === "deleted-only" || kind === "deleted-replacement" || kind === "active-defaults") {
+        if (r.use.status !== "succeeded") throw new Error("expected successful project read");
+        const selected = resolveT3ReadinessEffectiveSelection(r.use.value);
+        expect(selected.project).toBe(expected);
+        expect(selected.provisional).toBe(kind === "deleted-only");
+        if (kind === "deleted-only") {
+          expect(selected.selection).toMatchObject({
+            instanceId: "codex",
+            model: "catalog-default",
+          });
+          expect(Object.values(selected.sources)).not.toContain("project");
+        } else {
+          expect(selected.selection).toEqual(activeDefaults);
+          expect(selected.sources).toMatchObject({
+            provider: "project",
+            model: "project",
+            effort: "project",
+          });
+        }
+      }
     }
   } finally {
     process.env = saved;
@@ -226,6 +268,17 @@ test("A17 casing follows actual host filesystem, not naive lowercase", async () 
 test.each(["absent", "wrong-root"])(
   "A17 %s defers without project creation or checkout readiness",
   (kind) => exercise(kind, {}, "deferred"),
+);
+test.each([date, ""])(
+  "A17 deleted-only selected root (%s) never verifies project defaults",
+  (deletedAt) => exercise("deleted-only", { deletedAt }, "deferred"),
+);
+test.each([date, ""])(
+  "A17 deleted project (%s) does not make an active replacement ambiguous",
+  (deletedAt) => exercise("deleted-replacement", { deletedAt }),
+);
+test.each([{}, { deletedAt: null }])("A17 active shell defaults remain selected: %s", (change) =>
+  exercise("active-defaults", change),
 );
 test("A17 global project remains not applicable without shell read", () =>
   exercise("global", {}, "not_applicable"));
