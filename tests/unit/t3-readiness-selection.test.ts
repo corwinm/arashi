@@ -1,22 +1,11 @@
-import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import * as readiness from "../../src/lib/t3-readiness.ts";
-import {
-  resolveT3Selection,
-  nativeChildEnvironment,
-  type JsonObject,
-} from "../../src/lib/t3-native.ts";
-import { resolveT3ReadinessContext } from "../../src/lib/t3-readiness-context.ts";
-import { createReadinessFixture } from "../helpers/t3-readiness-fixture.ts";
+import { resolveT3Selection, type JsonObject } from "../../src/lib/t3-native.ts";
+import { withSelectionReadFixture } from "../helpers/t3-readiness-selection-fixture.ts";
 
 const date = "2026-01-01T00:00:00.000Z";
-const auth = {
-  policy: "loopback-browser",
-  bootstrapMethods: ["one-time-token"],
-  sessionMethods: ["bearer-access-token"],
-  sessionCookieName: "CANARY-cookie",
-};
 const option = (value: string) => ({ id: "effort", value });
 const saved = (instanceId = "instance-a", model = "model-a", effort = "deep") => ({
   instanceId,
@@ -315,175 +304,81 @@ const cases: [string, Scenario][] = [
 ];
 
 test.each(cases)("A18 default Bun owned selection: %s", async (_name, scenario) => {
-  const f = await createReadinessFixture();
-  const savedEnv = process.env;
-  const evidence = savedEnv.D1_SELECTION_EVIDENCE;
-  process.env = { ...f.env, T3CODE_HOME: f.baseDir, ARASHI_DIRECTIVE_FILE: "CANARY-directive" };
-  try {
-    if (scenario.source === "workspace" || scenario.source === "user") {
-      const owner = scenario.source === "user" ? f.home : f.repo;
-      await mkdir(join(owner, ".arashi"), { recursive: true });
-      await writeFile(
-        join(owner, ".arashi/config.json"),
-        JSON.stringify({
-          version: "1.0.0",
-          ...(owner === f.repo ? { reposDir: "./repos", repos: {} } : {}),
-          defaults: { t3: scenario.settings },
-        }),
-      );
-    }
-    const context = await resolveT3ReadinessContext({
-      cwd: f.repo,
-      explicitSettings: {
-        cli: f.cli,
-        baseDir: f.baseDir,
-        ...(!scenario.source || scenario.source === "cli" ? scenario.settings : {}),
-      },
-    });
-    for (const leaf of ["provider", "model", "effort"] as const)
-      if (context.settings[leaf]) expect(context.sources[leaf]).toBe(scenario.source ?? "cli");
-    if (scenario.global) context.checkout = null;
-    const cwd = context.checkout ?? f.root;
-    const env = nativeChildEnvironment({ T3CODE_HOME: f.baseDir });
-    for (const argv of [
-      f.versionArgv,
-      f.issueArgv.map((a) => (a === "Arashi handoff" ? "Arashi readiness" : a)),
-      [f.cli, "auth", "session", "revoke", "fixture-session-1", "--base-dir", f.baseDir],
-      [f.cli, "auth", "session", "list", "--base-dir", f.baseDir, "--json"],
-    ])
-      f.allowProcess(argv, cwd, env);
-    f.allowHttp("GET", "/.well-known/t3/environment");
-    f.allowHttp("GET", "/api/auth/session");
-    f.allowHttp("POST", "/api/auth/websocket-ticket");
-    if (context.checkout) f.allowHttp("GET", "/api/orchestration/shell");
-    f.allowWs("server.getConfig");
-    f.allowWs("Pong");
-    const descriptor = {
-      environmentId: "environment-1",
-      serverVersion: "0.0.43",
-      orchestrationProtocolVersion: 1,
-      platform: { os: process.platform, arch: process.arch },
-      capabilities: { repositoryIdentity: true, connectionProbe: true },
-    };
-    const project = {
-      id: "CANARY-project-id",
-      workspaceRoot: f.repo,
-      defaultModelSelection: null,
-      ...scenario.project,
-      extension: "CANARY-project-extension",
-    };
-    await f.configureReadFoundation({
-      descriptor,
-      session: {
+  await withSelectionReadFixture(
+    scenario,
+    catalog(scenario.providers, scenario.server),
+    saved("missing"),
+    async ({ f, context, before, savedEnv }) => {
+      const evidence = savedEnv.D1_SELECTION_EVIDENCE;
+      for (const leaf of ["provider", "model", "effort"] as const)
+        if (context.settings[leaf]) expect(context.sources[leaf]).toBe(scenario.source ?? "cli");
+      const preview = await readiness.collectT3ReadinessPreview({ cwd: f.root, context });
+      expect(preview.readiness).toBe("preview_passed");
+      // Pin all leaves and provenance. Neither mutable context nor public facts authorize changes.
+      context.settings.provider = "missing";
+      context.sources.provider = "user";
+      context.checkout = f.root;
+      const read = await readiness.collectT3AuthenticatedReadFoundation(preview, {
         authenticated: true,
-        auth,
-        sessionMethod: "bearer-access-token",
-        scopes: ["orchestration:read"],
-      },
-      catalog: {
-        environment: descriptor,
-        auth,
-        ...catalog(scenario.providers, scenario.server),
-        extension: "CANARY-catalog",
-      },
-      shell: {
-        snapshotSequence: 0,
-        updatedAt: date,
-        projects: [
-          ...(scenario.project === null ? [] : [project]),
-          {
-            ...project,
-            id: "CANARY-unrelated",
-            workspaceRoot: f.root,
-            defaultModelSelection: saved("missing"),
-          },
-        ],
-        threads: [],
-      },
-    });
-    if (scenario.cleanup) {
-      const cli = await readFile(f.cli, "utf8");
-      await writeFile(
-        f.cli,
-        scenario.cleanup === "failed"
-          ? cli.replace("console.log('{}');", "console.log('{}');process.exit(1);")
-          : cli.replace(
-              "console.log(JSON.stringify(load('sessions.json').map(s=>({sessionId:s.sessionId}))))",
-              "console.log('{}')",
-            ),
-      );
-    }
-    await f.installMarkers();
-    const before = await f.snapshot();
-    const preview = await readiness.collectT3ReadinessPreview({ cwd: f.root, context });
-    expect(preview.readiness).toBe("preview_passed");
-    // Pin all leaves and provenance. Neither mutable context nor public facts authorize changes.
-    context.settings.provider = "missing";
-    context.sources.provider = "user";
-    context.checkout = f.root;
-    const read = await readiness.collectT3AuthenticatedReadFoundation(preview, {
-      authenticated: true,
-    });
-    expect(read.use.status).toBe("succeeded");
-    if (read.use.status !== "succeeded") throw new Error("read prerequisite failed");
-    await f.waitForSocketsClosed();
-    expect(await f.snapshot()).toEqual(before);
-    expect(await f.activeSessions()).toEqual([]);
-    expect(read.cleanup.status).toBe(scenario.cleanup ?? "verified");
-    const effects = await f.effects();
-    expect(effects.filter((e) => e.kind === "denied")).toEqual([]);
-    expect(
-      effects
-        .filter((e) => e.kind === "process")
-        .map((e) => (e.argv![1] === "--version" ? "version" : e.argv![3])),
-    ).toEqual(["version", "version", "issue", "revoke", "list"]);
-    expect(effects.filter((e) => e.kind === "http").map((e) => e.path)).toEqual([
-      "/.well-known/t3/environment",
-      "/.well-known/t3/environment",
-      "/api/auth/session",
-      "/api/auth/websocket-ticket",
-      ...(scenario.global ? [] : ["/api/orchestration/shell"]),
-    ]);
-    expect(effects.filter((e) => e.kind === "ws").map((e) => e.tag)).toEqual([
-      "server.getConfig",
-      "Pong",
-    ]);
-    for (const marker of Object.values(f.markers)) await expect(access(marker)).rejects.toThrow();
-    if (evidence)
-      await appendFile(
-        join(evidence, "effects.jsonl"),
-        JSON.stringify({
-          run: savedEnv.D1_SELECTION_RUN,
-          case: expect.getState().currentTestName,
-          immutable: true,
-          remainingSessions: 0,
-          runtime: process.execPath,
-          operations: effects.map(({ sessionId: _privateId, ...e }) => ({
-            ...e,
-            argv: e.argv?.map((v) => (v === "fixture-session-1" ? "<owned-session>" : v)),
-          })),
-        }) + "\n",
-      );
-    const value = read.use.value;
-    const resolve =
-      process.env.D1_SELECTION_BASELINE_ADAPTER === "1"
-        ? (value: readiness.T3AuthenticatedReadFoundation) => value
-        : readiness.resolveT3ReadinessEffectiveSelection;
-    let result: unknown;
-    if (scenario.fail)
-      expect(() => resolve(read.use.status === "succeeded" ? read.use.value : undefined!)).toThrow(
-        expect.objectContaining({ code: scenario.fail }),
-      );
-    else {
-      result = resolve(read.use.value);
-      expect(result).toMatchObject({ effectiveSelection: "resolved", ...scenario.expected });
-      expect(JSON.stringify(result)).not.toMatch(
-        /CANARY|environment-1|fixture-session|127\.0\.0\.1/,
-      );
-      expect(() => resolve({ ...value })).toThrow();
-    }
-  } finally {
-    process.env = savedEnv;
-    await f.dispose();
-  }
+      });
+      expect(read.use.status).toBe("succeeded");
+      if (read.use.status !== "succeeded") throw new Error("read prerequisite failed");
+      await f.waitForSocketsClosed();
+      expect(await f.snapshot()).toEqual(before);
+      expect(await f.activeSessions()).toEqual([]);
+      expect(read.cleanup.status).toBe(scenario.cleanup ?? "verified");
+      const effects = await f.effects();
+      expect(effects.filter((e) => e.kind === "denied")).toEqual([]);
+      expect(
+        effects
+          .filter((e) => e.kind === "process")
+          .map((e) => (e.argv![1] === "--version" ? "version" : e.argv![3])),
+      ).toEqual(["version", "version", "issue", "revoke", "list"]);
+      expect(effects.filter((e) => e.kind === "http").map((e) => e.path)).toEqual([
+        "/.well-known/t3/environment",
+        "/.well-known/t3/environment",
+        "/api/auth/session",
+        "/api/auth/websocket-ticket",
+        ...(scenario.global ? [] : ["/api/orchestration/shell"]),
+      ]);
+      expect(effects.filter((e) => e.kind === "ws").map((e) => e.tag)).toEqual([
+        "server.getConfig",
+        "Pong",
+      ]);
+      for (const marker of Object.values(f.markers)) await expect(access(marker)).rejects.toThrow();
+      if (evidence)
+        await appendFile(
+          join(evidence, "effects.jsonl"),
+          JSON.stringify({
+            run: savedEnv.D1_SELECTION_RUN,
+            case: expect.getState().currentTestName,
+            immutable: true,
+            remainingSessions: 0,
+            runtime: process.execPath,
+            operations: effects.map(({ sessionId: _privateId, ...e }) => ({
+              ...e,
+              argv: e.argv?.map((v) => (v === "fixture-session-1" ? "<owned-session>" : v)),
+            })),
+          }) + "\n",
+        );
+      const value = read.use.value;
+      const resolve =
+        process.env.D1_SELECTION_BASELINE_ADAPTER === "1"
+          ? (value: readiness.T3AuthenticatedReadFoundation) => value
+          : readiness.resolveT3ReadinessEffectiveSelection;
+      let result: unknown;
+      if (scenario.fail)
+        expect(() =>
+          resolve(read.use.status === "succeeded" ? read.use.value : undefined!),
+        ).toThrow(expect.objectContaining({ code: scenario.fail }));
+      else {
+        result = resolve(read.use.value);
+        expect(result).toMatchObject({ effectiveSelection: "resolved", ...scenario.expected });
+        expect(JSON.stringify(result)).not.toMatch(
+          /CANARY|environment-1|fixture-session|127\.0\.0\.1/,
+        );
+        expect(() => resolve({ ...value })).toThrow();
+      }
+    },
+  );
 });

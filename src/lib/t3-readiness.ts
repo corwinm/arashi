@@ -1,4 +1,9 @@
 import { open, realpath } from "node:fs/promises";
+import {
+  T3_SESSION_SCOPES as scopes,
+  t3WireText as text,
+  t3WireTimestamp as timestamp,
+} from "./t3-wire.ts";
 import { isAbsolute } from "node:path";
 import { projectUsesWorkspace } from "./t3-handoff.ts";
 import { constants } from "node:fs";
@@ -184,30 +189,6 @@ const authenticatedReads = new WeakMap<
     checkTime: number;
   }
 >();
-const scopes = [
-  "orchestration:read",
-  "orchestration:operate",
-  "terminal:operate",
-  "review:write",
-  "relay:read",
-  "relay:write",
-  "access:read",
-  "access:write",
-];
-const text = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0 && value.trim() === value;
-const timestamp = (value: unknown): boolean => {
-  if (
-    typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
-  )
-    return false;
-  const time = Date.parse(value);
-  return (
-    Number.isFinite(time) &&
-    new Date(time).toISOString() === (value.includes(".") ? value : value.replace("Z", ".000Z"))
-  );
-};
 function validAuthDescriptor(value: unknown): boolean {
   const auth = record(value);
   return (

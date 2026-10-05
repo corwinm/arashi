@@ -1,4 +1,5 @@
 import { isAbsolute } from "node:path";
+import { t3WireTimestamp as dateValid } from "./t3-wire.ts";
 import { stripVTControlCharacters } from "node:util";
 import { summarizeDoctorFindings, type DoctorFinding, type DoctorSummary } from "./doctor.ts";
 import {
@@ -74,18 +75,6 @@ const selectionText = (value: unknown): value is string =>
   value.trim() === value &&
   !/[\p{Cc}\p{Cf}]/u.test(value) &&
   !value.includes("://");
-const dateValid = (value: unknown): value is string => {
-  if (
-    typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
-  )
-    return false;
-  const time = Date.parse(value);
-  return (
-    Number.isFinite(time) &&
-    new Date(time).toISOString() === (value.includes(".") ? value : value.replace("Z", ".000Z"))
-  );
-};
 function safePath(value: unknown): string | null {
   if (value === null) return null;
   requireValid(typeof value === "string" && isAbsolute(value));

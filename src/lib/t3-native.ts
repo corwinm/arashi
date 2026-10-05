@@ -1,4 +1,9 @@
 import { execFile } from "node:child_process";
+import {
+  T3_SESSION_SCOPES,
+  t3WireText as sessionListString,
+  t3WireTimestamp as sessionListTimestamp,
+} from "./t3-wire.ts";
 import { checkT3Read, runT3Read, t3Now, t3ReadError, type T3ReadControls } from "./t3-operation.ts";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -442,21 +447,6 @@ export interface T3OwnedSessionResult<T> {
   };
 }
 
-const sessionListString = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0 && value.trim() === value;
-const sessionListTimestamp = (value: unknown): boolean => {
-  if (
-    typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
-  )
-    return false;
-  const time = Date.parse(value);
-  return (
-    Number.isFinite(time) &&
-    new Date(time).toISOString() === (value.includes(".") ? value : value.replace("Z", ".000Z"))
-  );
-};
-
 /** Official CLI formatSessionList emits active records, not an HTTP envelope.
  * Validate the entire list before using even one identity; retain no records.
  */
@@ -477,16 +467,7 @@ function exactSessionAbsence(
     if (!Array.isArray(entries)) return "unknown";
     const ids = new Set<string>();
     const methods = ["browser-session-cookie", "bearer-access-token", "dpop-access-token"];
-    const scopes = [
-      "orchestration:read",
-      "orchestration:operate",
-      "terminal:operate",
-      "review:write",
-      "relay:read",
-      "relay:write",
-      "access:read",
-      "access:write",
-    ];
+    const scopes: readonly string[] = T3_SESSION_SCOPES;
     for (const entry of entries) {
       if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return "unknown";
       const session = entry as JsonObject;
