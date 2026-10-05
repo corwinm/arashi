@@ -5,7 +5,7 @@ import { ArashiError } from "./errors.ts";
 import { exec } from "./git.ts";
 import {
   getUserConfigPath,
-  loadUserConfig,
+  readUserConfigForDiagnostics,
   resolveEffectivePersonalConfig,
 } from "./user-config.ts";
 import { workspaceJsonMetadata } from "./workspace-context.ts";
@@ -277,9 +277,10 @@ export async function resolveT3ReadinessContext(options: {
         workspaceConfig: workspace.loaded.config,
         workspaceConfigPath: workspace.loaded.configPath,
         workspaceWorktreesDirAuthored: workspace.loaded.authoredWorktreesDir === true,
+        userConfigReader: readUserConfigForDiagnostics,
       })
     : null;
-  const user = effective ? effective.userConfig : (await loadUserConfig())?.config;
+  const user = effective ? effective.userConfig : (await readUserConfigForDiagnostics())?.config;
   const environmentBase = process.env.T3CODE_HOME;
   const authoredBase =
     options.explicitSettings.baseDir ??

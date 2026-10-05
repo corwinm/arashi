@@ -5,7 +5,7 @@ import * as status from "../../src/commands/status.ts";
 import * as remove from "../../src/core/remove.ts";
 import { executeDoctor } from "../../src/commands/doctor.ts";
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { createReadinessFixture } from "../helpers/t3-readiness-fixture.ts";
@@ -531,6 +531,58 @@ describe("doctor T3 command boundary A05/A06/A11/A21", () => {
       await f.dispose();
     }
   });
+  test.each([false, true])(
+    "nonregular and oversized configuration stops doctor before native effects (authenticated %s)",
+    async (authenticated) => {
+      for (const owner of ["workspace", "personal"]) {
+        for (const kind of [
+          "directory",
+          "oversize",
+          ...(process.platform === "win32" ? [] : ["fifo", "symlink-fifo"]),
+        ]) {
+          const { f, cwd, env, args } = await fixture();
+          try {
+            const root = owner === "workspace" ? cwd : f.home;
+            await mkdir(join(root, ".arashi"), { recursive: true });
+            const path = join(root, ".arashi/config.json");
+            await rm(path, { recursive: true, force: true });
+            if (kind === "directory") await mkdir(path);
+            else if (kind === "oversize") await writeFile(path, " ".repeat(1024 * 1024 + 1));
+            else {
+              const fifo = kind === "fifo" ? path : join(root, "owned.fifo");
+              await promisify(execFile)("mkfifo", [fifo]);
+              if (kind === "symlink-fifo") await symlink(fifo, path);
+            }
+            const before = await lstat(path);
+            const result = await run(cwd, env, [
+              entry,
+              ...args,
+              "--json",
+              ...(authenticated ? ["--t3-authenticated"] : []),
+            ]);
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toBe("");
+            expect(JSON.parse(result.stdout).error.code).toBe("DOCTOR_BLOCKING_FINDINGS");
+            expect(
+              data(result.stdout).findings.map((finding: { code: string }) => finding.code),
+            ).toContain("T3_SELECTION_INVALID");
+            expect(data(result.stdout).cleanup.state).toBe("not_attempted");
+            expect(result.stdout).not.toContain(path);
+            expect(result.stdout).not.toContain(f.root);
+            expect(await f.effects()).toEqual([]);
+            const after = await lstat(path);
+            expect([after.mode, after.size, after.mtimeMs]).toEqual([
+              before.mode,
+              before.size,
+              before.mtimeMs,
+            ]);
+          } finally {
+            await f.dispose();
+          }
+        }
+      }
+    },
+  );
   test("direct extra task positional rejects before diagnostics", async () => {
     const { f, cwd, env, options } = await fixture();
     try {

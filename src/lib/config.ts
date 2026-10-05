@@ -16,7 +16,8 @@ import {
 } from "./worktree-location.ts";
 import { basename, dirname, join, resolve } from "path";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
-import { lstat, mkdir, readFile, realpath } from "fs/promises";
+import { lstat, mkdir, realpath } from "fs/promises";
+import { MAX_DIAGNOSTIC_CONFIG_BYTES, readDiagnosticConfigText } from "./diagnostic-config-read.ts";
 import { ArashiError } from "./errors.ts";
 import { warn } from "./logger.ts";
 import { isValidRequestedBaseBranch, normalizeLogicalBranchName } from "./git-branch-name.ts";
@@ -1707,10 +1708,16 @@ export const readConfigForDiagnostics = async (
     }
   } else {
     try {
-      text = await readFile(localPath, "utf8");
+      text = await readDiagnosticConfigText(localPath);
     } catch {
       throw new ConfigError("Failed to read applicable configuration");
     }
+  }
+  if (
+    source === "repository-content" &&
+    Buffer.byteLength(text, "utf8") > MAX_DIAGNOSTIC_CONFIG_BYTES
+  ) {
+    throw new ConfigError("Applicable configuration exceeds diagnostic byte budget");
   }
   let data: unknown;
   try {

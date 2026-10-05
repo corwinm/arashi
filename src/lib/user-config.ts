@@ -15,6 +15,8 @@ import {
   type WorktreeNamingConfig,
 } from "./config.ts";
 import { runtime } from "./runtime.ts";
+import { lstat, realpath } from "node:fs/promises";
+import { readDiagnosticConfigText } from "./diagnostic-config-read.ts";
 import { WorktreeLocationValidationError } from "./worktree-location.ts";
 
 export const DEFAULT_USER_CONFIG_SCHEMA_URL =
@@ -147,6 +149,53 @@ export const loadUserConfig = async (
   }
 };
 
+/** Diagnostic-only reader; retain ordinary loader/migration semantics elsewhere. */
+export const readUserConfigForDiagnostics = async (
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ config: UserConfig; path: string } | null> => {
+  const path = getUserConfigPath(env);
+  try {
+    await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new ConfigError("Failed to inspect user configuration");
+    }
+    let parent;
+    try {
+      parent = await lstat(dirname(path));
+    } catch (parentError) {
+      if ((parentError as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new ConfigError("Failed to inspect user configuration");
+      }
+    }
+    if (parent?.isSymbolicLink()) {
+      try {
+        await realpath(dirname(path));
+      } catch {
+        throw new ConfigError("Failed to inspect user configuration");
+      }
+    }
+    return null;
+  }
+  let text: string;
+  try {
+    text = await readDiagnosticConfigText(path);
+  } catch {
+    throw new ConfigError("Failed to read user configuration");
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new ConfigParseError(path, new Error("Invalid JSON"));
+  }
+  try {
+    return { config: normalizeUserConfig(data), path };
+  } catch {
+    throw new ConfigError("User configuration is invalid");
+  }
+};
+
 const leaf = <T>(
   workspace: T | undefined,
   user: T | undefined,
@@ -222,8 +271,9 @@ export const resolveEffectivePersonalConfig = async (options: {
   workspaceConfigPath?: string | null;
   workspaceWorktreesDirAuthored?: boolean;
   env?: NodeJS.ProcessEnv;
+  userConfigReader?: typeof loadUserConfig;
 }): Promise<EffectivePersonalConfig> => {
-  const loadedUser = await loadUserConfig(options.env);
+  const loadedUser = await (options.userConfigReader ?? loadUserConfig)(options.env);
   const user = loadedUser?.config;
   const workspace = options.workspaceConfig;
   const sources: Record<string, EffectiveConfigSource> = {};

@@ -12,6 +12,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const wrapped = { ...original };
   for (const operation of [
     "readFile",
+    "open",
     "readdir",
     "lstat",
     "stat",
@@ -908,8 +909,10 @@ describe("readiness authority and bounded effects A03 A25", () => {
       await context({ cwd: f.repo });
       filesystemAudit.active = false;
       expect(
-        filesystemAudit.calls.filter((call) => ["readFile", "readdir"].includes(call.operation)),
-      ).toEqual([{ operation: "readFile", path }]);
+        filesystemAudit.calls.filter((call) =>
+          ["open", "readFile", "readdir"].includes(call.operation),
+        ),
+      ).toEqual([{ operation: "open", path }]);
       for (const call of filesystemAudit.calls) {
         expect(["chmod", "mkdir", "writeFile", "rm"].includes(call.operation)).toBe(false);
         expect(call.path).not.toMatch(
@@ -917,8 +920,7 @@ describe("readiness authority and bounded effects A03 A25", () => {
         );
       }
       for (const spy of ordinary) expect(spy).not.toHaveBeenCalled();
-      for (const [path] of read.mock.calls)
-        expect(String(path)).toBe(join(f.home, ".arashi/config.json"));
+      expect(read).not.toHaveBeenCalled();
       const allowed = new Set([
         JSON.stringify(["git", "rev-parse", "--is-bare-repository"]),
         JSON.stringify(["git", "rev-parse", "--show-toplevel"]),
