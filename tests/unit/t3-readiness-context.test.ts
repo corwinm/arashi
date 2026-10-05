@@ -457,6 +457,82 @@ describe("readiness locale-independent Git identity", () => {
     await expect(context({ cwd: f.home })).resolves.toMatchObject({ checkout: null });
   });
 
+  test.each([
+    ["selected", false],
+    ["ancestor", false],
+    ["selected", true],
+    ["ancestor", true],
+  ])(
+    "ordinary objects and refs directories at %s (HEAD document: %s) allow global context",
+    async (location, head) => {
+      const f = await translatedGit();
+      await mkdir(join(f.home, "objects"));
+      await mkdir(join(f.home, "refs"));
+      if (head) await writeFile(join(f.home, "HEAD"), "ordinary document\n");
+      const cwd = location === "selected" ? f.home : join(f.home, "nested");
+      await mkdir(cwd, { recursive: true });
+      const before = await f.snapshot();
+      await expect(context({ cwd })).resolves.toMatchObject({
+        checkout: null,
+        workspace: null,
+        workspaceRoot: null,
+      });
+      expect(await f.snapshot()).toEqual(before);
+    },
+  );
+
+  test.each([
+    ["ordinary document", "ordinary file\n"],
+    ["wrong section", "[unrelated]\n bare = true\n"],
+    ["non-bare config", "[core]\n bare = false\n"],
+    ["overridden bare", "[core]\n bare = true\n bare = false\n"],
+    ["include ambiguity", "[core]\n bare = true\n[include]\n path = elsewhere\n"],
+    ["oversized config", "[core]\n bare = true\n#" + "x".repeat(4096)],
+  ])("ordinary layout with %s is not damaged bare evidence", async (_name, config) => {
+    const f = await translatedGit();
+    await mkdir(join(f.home, "objects"));
+    await mkdir(join(f.home, "refs"));
+    await writeFile(join(f.home, "config"), config);
+    await expect(context({ cwd: f.home })).resolves.toMatchObject({ checkout: null });
+  });
+
+  test.each(["ordinary", "dangling", "directory", "bare"])(
+    "%s config symlink uses only bounded regular-target evidence",
+    async (kind) => {
+      const f = await translatedGit();
+      await mkdir(join(f.home, "objects"));
+      const target = join(f.home, "config-target");
+      if (kind === "directory") await mkdir(target);
+      else if (kind !== "dangling")
+        await writeFile(target, kind === "bare" ? "[core]\n bare = true\n" : "ordinary");
+      await symlink(target, join(f.home, "config"));
+      if (kind === "bare") await expect(context({ cwd: f.home })).rejects.toThrow();
+      else await expect(context({ cwd: f.home })).resolves.toMatchObject({ checkout: null });
+    },
+  );
+
+  test("an unowned config FIFO does not block global context", async () => {
+    const f = await translatedGit();
+    await mkdir(join(f.home, "objects"));
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    await promisify(execFile)("mkfifo", [join(f.home, "config")]);
+    await expect(context({ cwd: f.home })).resolves.toMatchObject({ checkout: null });
+  });
+
+  test("unreadable unowned config is not Git evidence", async () => {
+    const f = await translatedGit();
+    await mkdir(join(f.home, "objects"));
+    const config = join(f.home, "config");
+    await writeFile(config, "[core]\n bare = true\n");
+    await chmod(config, 0);
+    try {
+      await expect(context({ cwd: f.home })).resolves.toMatchObject({ checkout: null });
+    } finally {
+      await chmod(config, 0o600);
+    }
+  });
+
   test.each(["HEAD", "objects", "refs"])("a lone %s name is not bare metadata", async (name) => {
     const f = await translatedGit();
     if (name === "HEAD") {

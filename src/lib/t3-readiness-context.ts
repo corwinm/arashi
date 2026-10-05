@@ -1,5 +1,6 @@
 import { dirname, join, resolve } from "node:path";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { ArashiError } from "./errors.ts";
 import { exec } from "./git.ts";
 import {
@@ -136,6 +137,43 @@ async function discoverWorkspace(identity: CheckoutIdentity | null): Promise<{
   return null;
 }
 
+// Conservative positive evidence only: names alone cannot identify damaged bare
+// metadata. This is not a recovery resolver; absent/oversized/unreadable config
+// or other Git config spellings can leave a damaged bare repository unclassified.
+async function hasBareConfig(path: string): Promise<boolean> {
+  try {
+    // Match the diagnostic reader's nonblocking, regular-file, bounded-read policy.
+    // Following a symlink is safe only when its opened target is a regular file.
+    const file = await open(join(path, "config"), constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      if (!(await file.stat()).isFile()) return false;
+      const buffer = Buffer.alloc(4097);
+      let size = 0;
+      while (size < buffer.length) {
+        const { bytesRead } = await file.read(buffer, size, buffer.length - size, null);
+        if (!bytesRead) break;
+        size += bytesRead;
+      }
+      if (size === buffer.length) return false;
+      let core = false;
+      let bare = false;
+      for (const line of buffer.subarray(0, size).toString("utf8").split(/\r?\n/u)) {
+        // Includes need Git's full resolution rules, outside this bounded fallback.
+        if (/^\s*\[include(?:If)?(?:\s|\])/iu.test(line)) return false;
+        if (/^\s*\[/u.test(line)) core = /^\s*\[core\]\s*(?:[#;].*)?$/iu.test(line);
+        if (core && /^\s*bare(?:\s|=|$)/iu.test(line))
+          bare = /^\s*bare\s*=\s*true\s*(?:[#;].*)?$/iu.test(line);
+      }
+      return bare;
+    } finally {
+      await file.close();
+    }
+  } catch {
+    // An unrelated config's I/O failure is not positive Git ownership evidence.
+    return false;
+  }
+}
+
 async function checkoutIdentity(path: string): Promise<CheckoutIdentity | null> {
   // Only this diagnostic classification probe needs stable human error text.
   // Do not change the caller's locale or ordinary Git commands.
@@ -160,22 +198,17 @@ async function checkoutIdentity(path: string): Promise<CheckoutIdentity | null> 
             throw inspectionError;
           }
         }
-        // A damaged bare repository has no .git entry. Two surviving layout
-        // Entries are evidence of metadata, not proof of ordinary absence.
-        let bareEntries = 0;
-        for (const name of ["HEAD", "objects", "refs"]) {
+        // A surviving object/ref directory needs repository-specific content,
+        // not a second ordinary name, before it can establish damaged metadata.
+        let hasBareDirectory = false;
+        for (const name of ["objects", "refs"]) {
           try {
-            const entry = await lstat(join(ancestor, name));
-            if (name === "HEAD" ? entry.isFile() : entry.isDirectory()) {
-              bareEntries++;
-            }
-          } catch (inspectionError) {
-            if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") {
-              throw inspectionError;
-            }
+            if ((await lstat(join(ancestor, name))).isDirectory()) hasBareDirectory = true;
+          } catch {
+            // Unowned ordinary entries (including I/O failures) are not Git evidence.
           }
         }
-        if (bareEntries >= 2) {
+        if (hasBareDirectory && (await hasBareConfig(ancestor))) {
           throw error;
         }
         const parent = dirname(ancestor);
