@@ -29,7 +29,7 @@ import type { T3Settings } from "./t3-settings.ts";
 
 const MAX_BYTES = 1024 * 1024;
 const OPERATION_MS = 15_000;
-const reasons = {
+export const T3_READINESS_REASONS = {
   T3_CHECK_CANCELLED: "check_cancelled",
   T3_CHECK_TIMEOUT: "check_timeout",
   T3_IDENTITY_CHANGED: "preview_identity_changed",
@@ -50,15 +50,32 @@ const reasons = {
   T3_PROTOCOL_UNSUPPORTED: "protocol_unsupported",
   T3_VERSION_MISMATCH: "version_mismatch",
   T3_ENVIRONMENT_INVALID: "environment_invalid",
-  T3_AUTH_FAILED: "public_descriptor_rejected",
-  T3_HTTP_FAILED: "public_descriptor_failed",
+  T3_AUTH_FAILED: "authentication_rejected",
+  T3_HTTP_FAILED: "http_read_failed",
   T3_RESPONSE_INVALID: "descriptor_invalid",
   T3_UNREACHABLE: "operation_unreachable",
   T3_CHECK_DEFERRED: "authenticated_check_deferred",
   T3_PROJECT_DEFAULTS_DEFERRED: "project_defaults_deferred",
   T3_PROJECT_NOT_APPLICABLE: "project_not_applicable",
   T3_CHECK_UNKNOWN: "prerequisite_unverified",
+  T3_AUTHENTICATION_VERIFIED: "administrative_read_verified",
+  T3_CATALOG_VERIFIED: "catalog_read_verified",
+  T3_PROJECT_VERIFIED: "existing_project_verified",
+  T3_EFFECTIVE_SELECTION_VERIFIED: "effective_selection_resolved",
+  T3_PROVIDER_STATE_UNKNOWN: "provider_prerequisites_unknown",
+  T3_AUTH_UNSUPPORTED: "authentication_unsupported",
+  T3_CATALOG_UNAVAILABLE: "catalog_unavailable",
+  T3_CATALOG_INVALID: "catalog_invalid",
+  T3_PROVIDER_AMBIGUOUS: "provider_unavailable_or_ambiguous",
+  T3_MODEL_UNAVAILABLE: "model_unavailable",
+  T3_OPTIONS_UNSUPPORTED: "options_unsupported",
+  T3_EFFORT_UNSUPPORTED: "effort_unsupported",
+  T3_HANDOFF_FAILED: "authenticated_read_failed",
+  T3_OUTPUT_INVALID: "output_evidence_invalid",
+  T3_AUTH_CLEANUP_FAILED: "owned_cleanup_failed",
+  T3_AUTH_CLEANUP_UNKNOWN: "owned_cleanup_unknown",
 } as const;
+const reasons = T3_READINESS_REASONS;
 type Code = keyof typeof reasons;
 export interface ReadinessStage {
   name:
@@ -92,7 +109,7 @@ export interface T3ReadinessPreviewDependencies extends T3NativeDependencies {
 interface PreviewIdentity {
   cwd: string;
   context: Pick<T3ReadinessContext, "checkout" | "settings"> &
-    Partial<Pick<T3ReadinessContext, "sources">>;
+    Partial<Pick<T3ReadinessContext, "sources" | "workspaceRoot">>;
   baseDir: string;
   origin: string;
   pid: number;
@@ -103,6 +120,25 @@ interface PreviewIdentity {
 // Private evidence is deliberately not a field/symbol on the public result.
 // Copies/serialized previews cannot authorize a recheck; public facts are not authority.
 const previewIdentities = new WeakMap<T3ReadinessPreview, PreviewIdentity>();
+const previewContexts = new WeakMap<
+  T3ReadinessPreview,
+  {
+    workspaceRoot: string | null;
+    checkout: string | null;
+    sources: T3ReadinessContext["sources"];
+    settings: T3Settings;
+  }
+>();
+const authenticatedProgress = new WeakMap<T3ReadinessPreview, ReadinessStage[]>();
+function observeRead(
+  preview: T3ReadinessPreview,
+  name: ReadinessStage["name"],
+  state: ReadinessStage["state"],
+  code: Code,
+): void {
+  const stage = authenticatedProgress.get(preview)?.find((s) => s.name === name);
+  if (stage) Object.assign(stage, { state, code, reason: reasons[code] });
+}
 
 /** Foundation only: call immediately before future owned acquisition, never issue here. */
 export async function recheckT3ReadinessPreview(
@@ -345,6 +381,7 @@ export async function collectT3AuthenticatedReadFoundation(
         (Object.hasOwn(session, "expiresAt") && !timestamp(session.expiresAt))
       )
         readFailure("T3_AUTH_FAILED");
+      observeRead(preview, "authentication", "verified", "T3_AUTHENTICATION_VERIFIED");
       const config = await readT3Config(identity.origin, token, request, {
         boundedRead: true,
         readiness: control,
@@ -365,6 +402,7 @@ export async function collectT3AuthenticatedReadFoundation(
         Array.isArray(config.settings)
       )
         readFailure("T3_RESPONSE_INVALID");
+      observeRead(preview, "catalog", "verified", "T3_CATALOG_VERIFIED");
       let project: ProjectDefaults | undefined;
       if (identity.context.checkout) {
         const shell = await request("/api/orchestration/shell");
@@ -392,6 +430,20 @@ export async function collectT3AuthenticatedReadFoundation(
         project: identity.context.checkout ? (project ? "verified" : "deferred") : "not_applicable",
         effectiveSelection: "deferred",
       };
+      observeRead(
+        preview,
+        "project",
+        value.project === "verified"
+          ? "verified"
+          : value.project === "deferred"
+            ? "deferred"
+            : "not_applicable",
+        value.project === "verified"
+          ? "T3_PROJECT_VERIFIED"
+          : value.project === "deferred"
+            ? "T3_PROJECT_DEFAULTS_DEFERRED"
+            : "T3_PROJECT_NOT_APPLICABLE",
+      );
       authenticatedReads.set(value, { config, project, context: identity.context, checkTime });
       return value;
     });
@@ -669,6 +721,12 @@ async function collectPreview(
         ...options,
         explicitSettings: options.explicitSettings ?? {},
       }));
+    previewContexts.set(result, {
+      workspaceRoot: selected.workspaceRoot ?? null,
+      checkout: selected.checkout,
+      sources: { ...selected.sources },
+      settings: { ...selected.settings },
+    });
     // Snapshot the selected checkout/settings before any native await. Never
     // re-resolve mutable configuration or environment fallback at the gate.
     const context = {
@@ -882,4 +940,120 @@ async function collectPreview(
     result.findings.push({ code, reason: reasons[code], severity: "error" });
   }
   return result;
+}
+
+/** Internal composed observations; consumers must use the screened output helper.
+ * The same-object binding supplies paths/provenance, never copied public facts. */
+export interface T3ReadinessOutcome {
+  checkMode: "preview" | "authenticated";
+  readiness: "preview_passed" | "global_verified" | "checkout_verified" | "unknown" | "blocked";
+  stages: ReadinessStage[];
+  cleanup: { state: "not_attempted" | "verified" | "failed" | "unknown" };
+  findings: { code: Code; severity: "error" | "warning" }[];
+  selection?: T3Selection &
+    Pick<T3EffectiveSelectionFoundation, "provisional" | "sources" | "optionSources">;
+  provider?: T3ProviderStateFoundation["provider"];
+}
+const outputContexts = new WeakMap<
+  T3ReadinessOutcome,
+  {
+    workspaceRoot: string | null;
+    checkout: string | null;
+    sources: T3ReadinessContext["sources"];
+    settings: T3Settings;
+    observed: T3ReadinessOutcome;
+  }
+>();
+/** Internal projection authority. No transport, catalog, profile or credentials. */
+export function t3ReadinessOutputContext(value: T3ReadinessOutcome) {
+  const evidence = outputContexts.get(value);
+  return evidence ? structuredClone(evidence) : undefined;
+}
+export async function collectT3ReadinessOutcome(
+  options: Parameters<typeof collectT3ReadinessPreview>[0] & {
+    authenticated?: boolean;
+    signal?: AbortSignal;
+  },
+  dependencies: T3ReadinessPreviewDependencies = {},
+): Promise<T3ReadinessOutcome> {
+  const preview = await collectT3ReadinessPreview(options, dependencies);
+  const result: T3ReadinessOutcome = {
+    checkMode: options.authenticated === true ? "authenticated" : "preview",
+    readiness: preview.readiness,
+    stages: preview.stages.map((stage) => ({ ...stage })),
+    cleanup: { state: "not_attempted" },
+    findings: preview.findings.map(({ code, severity }) => ({ code, severity })),
+  };
+  const retain = () => {
+    outputContexts.set(result, {
+      ...(previewContexts.get(preview) ?? {
+        workspaceRoot: null,
+        checkout: null,
+        sources: {},
+        settings: {},
+      }),
+      observed: structuredClone(result),
+    });
+    return result;
+  };
+  if (options.authenticated !== true || preview.exitCode !== 0) return retain();
+  // The read collector marks only independently completed stages. A later read
+  // error/cleanup failure cannot erase authentication/catalog observations.
+  authenticatedProgress.set(preview, result.stages);
+  let active: ReadinessStage["name"] = "authentication";
+  const failure = (error: unknown) => {
+    const code =
+      error instanceof T3HandoffError && Object.hasOwn(reasons, error.code)
+        ? (error.code as Code)
+        : "T3_HANDOFF_FAILED";
+    const incomplete = result.stages.find(
+      (stage) =>
+        ["authentication", "catalog", "project"].includes(stage.name) &&
+        !["verified", "not_applicable"].includes(stage.state),
+    );
+    if (active !== "effectiveSelection") active = incomplete?.name ?? active;
+    const stage = result.stages.find((s) => s.name === active)!;
+    Object.assign(stage, { state: "failed", code, reason: reasons[code] });
+    result.readiness = "blocked";
+    result.findings.push({ code, severity: "error" });
+  };
+  try {
+    const read = await collectT3AuthenticatedReadFoundation(
+      preview,
+      { authenticated: true, signal: options.signal },
+      dependencies,
+    );
+    result.cleanup = { state: read.cleanup.status };
+    if (read.use.status !== "succeeded") {
+      failure(read.failure);
+    } else {
+      active = "effectiveSelection";
+      const effective = resolveT3ReadinessEffectiveSelection(read.use.value);
+      result.selection = {
+        instanceId: effective.selection.instanceId,
+        model: effective.selection.model,
+        options: effective.selection.options.map((option) => ({ ...option })),
+        provisional: effective.provisional,
+        sources: { ...effective.sources },
+        optionSources: effective.optionSources.map((option) => ({ ...option })),
+      };
+      observeRead(preview, "effectiveSelection", "verified", "T3_EFFECTIVE_SELECTION_VERIFIED");
+      const classified = classifyT3ReadinessProviderState(effective);
+      result.provider = { ...classified.provider };
+      result.readiness = classified.readiness;
+      if (classified.provider.state === "unknown")
+        result.findings.push({ code: "T3_PROVIDER_STATE_UNKNOWN", severity: "warning" });
+    }
+  } catch (error) {
+    failure(error);
+  } finally {
+    authenticatedProgress.delete(preview);
+  }
+  if (result.cleanup.state === "failed" || result.cleanup.state === "unknown")
+    result.findings.push({
+      code:
+        result.cleanup.state === "failed" ? "T3_AUTH_CLEANUP_FAILED" : "T3_AUTH_CLEANUP_UNKNOWN",
+      severity: "error",
+    });
+  return retain();
 }
