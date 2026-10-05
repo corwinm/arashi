@@ -330,11 +330,6 @@ export const createCommand = (): Command =>
     .option("--t3-model <slug-or-alias>", "T3 model selection")
     .option("--t3-effort <catalog-value>", "T3 catalog effort selection")
     .allowExcessArguments(false)
-    .hook("preAction", (command) => {
-      if (invalidT3Options(command.opts<DoctorOptions>())) {
-        command.error(t3ModeRequired);
-      }
-    })
     .addHelpText(
       "after",
       `

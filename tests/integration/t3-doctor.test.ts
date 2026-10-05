@@ -194,19 +194,51 @@ describe("doctor T3 command boundary A05/A06/A11/A21", () => {
       await f.dispose();
     }
   });
-  test.each(cliFlags)("CLI %s requires mode", async (flag) => {
+  test.each(cliFlags)("CLI JSON %s without mode returns a screened envelope", async (flag) => {
     const f = await createReadinessFixture();
     try {
-      const result = await run(f.root, f.env, [
+      const before = await f.snapshot();
+      const result = await run(f.repo, f.env, [
+        entry,
+        "doctor",
+        "--json",
+        flag,
+        ...(flag === "--t3-authenticated" ? [] : [flag === "--path" ? f.repo : "CANARY-private"]),
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toEqual({
+        schemaVersion: 1,
+        command: "doctor",
+        ok: false,
+        error: { code: "INVALID_OPTIONS", message: "T3-only options require --t3." },
+        warnings: [],
+      });
+      expect(result.stdout).not.toContain("CANARY-private");
+      expect(result.stdout).not.toContain(f.repo);
+      expect(await f.effects()).toEqual([]);
+      expect(await f.snapshot()).toEqual(before);
+    } finally {
+      await f.dispose();
+    }
+  });
+  test.each(cliFlags)("CLI human %s without mode remains an error", async (flag) => {
+    const f = await createReadinessFixture();
+    try {
+      const before = await f.snapshot();
+      const result = await run(f.repo, f.env, [
         entry,
         "doctor",
         flag,
-        ...(flag === "--t3-authenticated" ? [] : ["unused"]),
-        "--json",
+        ...(flag === "--t3-authenticated" ? [] : [flag === "--path" ? f.repo : "CANARY-private"]),
       ]);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toContain("require --t3");
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("T3-only options require --t3.");
+      expect(result.stderr).not.toContain("CANARY-private");
+      expect(result.stderr).not.toContain(f.repo);
       expect(await f.effects()).toEqual([]);
+      expect(await f.snapshot()).toEqual(before);
     } finally {
       await f.dispose();
     }
