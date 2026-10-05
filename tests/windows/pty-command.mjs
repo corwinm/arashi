@@ -84,17 +84,21 @@ exit $exitCode
   const recordEvent = (event) => events.push({ event, atMs: Date.now() - started });
   let output = "";
   const saveResult = (exitCode) => {
-    writeFileSync(
-      config.resultPath,
-      JSON.stringify({
-        started,
-        events,
-        durationMs: Date.now() - started,
-        exitCode,
-        output,
-        reused,
-      }),
-    );
+    try {
+      writeFileSync(
+        config.resultPath,
+        JSON.stringify({
+          started,
+          events,
+          durationMs: Date.now() - started,
+          exitCode,
+          output,
+          reused,
+        }),
+      );
+    } catch {
+      console.error("Could not save ConPTY session diagnostics");
+    }
   };
   let promptObserved = false;
   let reuseAnswered = false;

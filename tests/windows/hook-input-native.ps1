@@ -306,11 +306,16 @@ finally {
   else {
     Write-Warning "Native hook-input failure evidence retained at: $temp"
     if ($env:RUNNER_TEMP) {
-      $evidence = Join-Path $env:RUNNER_TEMP "arashi-hook-evidence"
-      New-Item -ItemType Directory -Force -Path $evidence | Out-Null
-      Get-ChildItem -LiteralPath $temp -File |
-        Where-Object { $_.Name -like "pty-result-*.json" -or $_.Name -eq "interrupt.trace" -or $_.Name -eq "hook-input.log" } |
-        Copy-Item -Destination $evidence
+      try {
+        $evidence = Join-Path $env:RUNNER_TEMP "arashi-hook-evidence"
+        New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+        Get-ChildItem -LiteralPath $temp -File |
+          Where-Object { $_.Name -like "pty-result-*.json" -or $_.Name -eq "interrupt.trace" -or $_.Name -eq "hook-input.log" } |
+          Copy-Item -Destination $evidence
+      }
+      catch {
+        Write-Warning "Could not copy native hook-input failure evidence" -WarningAction Continue
+      }
     }
   }
 }
