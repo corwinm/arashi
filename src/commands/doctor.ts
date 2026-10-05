@@ -18,6 +18,8 @@ import {
 } from "../lib/doctor.ts";
 import { checkRepoStatus } from "./status.ts";
 import { discoverPrunableWorktrees } from "../core/remove.ts";
+import { collectT3ReadinessOutcome } from "../lib/t3-readiness.ts";
+import { formatT3ReadinessOutput } from "../lib/t3-readiness-output.ts";
 
 const ZERO = 0;
 const ERROR_EXIT_CODE = 1;
@@ -28,7 +30,28 @@ type DoctorSeverity = DoctorFinding["severity"];
 
 export interface DoctorOptions {
   json?: boolean;
+  t3?: boolean;
+  t3Authenticated?: boolean;
+  path?: string;
+  t3Cli?: string;
+  t3BaseDir?: string;
+  t3Provider?: string;
+  t3Model?: string;
+  t3Effort?: string;
 }
+
+const t3OnlyOptions = [
+  "t3Authenticated",
+  "path",
+  "t3Cli",
+  "t3BaseDir",
+  "t3Provider",
+  "t3Model",
+  "t3Effort",
+] as const;
+const invalidT3Options = (options: DoctorOptions): boolean =>
+  options.t3 !== true && t3OnlyOptions.some((key) => options[key] !== undefined);
+const t3ModeRequired = "T3-only options require --t3.";
 
 const severityLabel = (severity: DoctorSeverity): string => {
   if (severity === "error") {
@@ -94,7 +117,46 @@ export const formatDoctorHumanOutput = (result: DoctorResult): string => {
   return lines.join("\n");
 };
 
-export const executeDoctor = async (options: DoctorOptions = {}): Promise<number> => {
+export const executeDoctor = async (
+  options: DoctorOptions = {},
+  ...unexpectedArguments: unknown[]
+): Promise<number> => {
+  if (invalidT3Options(options) || unexpectedArguments.length > ZERO) {
+    const message =
+      unexpectedArguments.length > ZERO
+        ? "Doctor does not accept positional arguments."
+        : t3ModeRequired;
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("doctor", {
+          code: "INVALID_OPTIONS",
+          message,
+        }),
+      );
+    } else {
+      console.error(message);
+    }
+    return ERROR_EXIT_CODE;
+  }
+  if (options.t3 === true) {
+    // The collector owns read-only context discovery and screens context failures.
+    // It also owns authenticated cancellation/finally cleanup; never exit inside it.
+    const outcome = await collectT3ReadinessOutcome({
+      authenticated: options.t3Authenticated === true,
+      cwd: process.cwd(),
+      explicitSettings: {
+        ...(options.t3Cli === undefined ? {} : { cli: options.t3Cli }),
+        ...(options.t3BaseDir === undefined ? {} : { baseDir: options.t3BaseDir }),
+        ...(options.t3Provider === undefined ? {} : { provider: options.t3Provider }),
+        ...(options.t3Model === undefined ? {} : { model: options.t3Model }),
+        ...(options.t3Effort === undefined ? {} : { effort: options.t3Effort }),
+      },
+      path: options.path,
+    });
+    const output = formatT3ReadinessOutput(outcome, options.json === true);
+    process.stdout.write(`${output.text}\n`);
+    return output.exitCode;
+  }
   let context;
   try {
     context = await resolveWorkspaceContext();
@@ -253,6 +315,26 @@ export const createCommand = (): Command =>
   new Command("doctor")
     .description("Run non-mutating Arashi workspace diagnostics")
     .option("-j, --json", "Output a structured JSON envelope")
+    .option("--t3", "Check T3 prerequisites only (preview by default)")
+    .option(
+      "--t3-authenticated",
+      "Explicitly allow administrative authentication for bounded T3 reads",
+    )
+    .option(
+      "--path <existing-checkout>",
+      "Select one existing registered Git checkout for T3 diagnostics",
+    )
+    .option("--t3-cli <executable>", "T3 executable command or absolute path")
+    .option("--t3-base-dir <absolute-directory>", "Selected T3 profile directory")
+    .option("--t3-provider <instance-or-unambiguous-driver>", "T3 provider selection")
+    .option("--t3-model <slug-or-alias>", "T3 model selection")
+    .option("--t3-effort <catalog-value>", "T3 catalog effort selection")
+    .allowExcessArguments(false)
+    .hook("preAction", (command) => {
+      if (invalidT3Options(command.opts<DoctorOptions>())) {
+        command.error(t3ModeRequired);
+      }
+    })
     .addHelpText(
       "after",
       `
