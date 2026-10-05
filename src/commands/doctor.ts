@@ -329,7 +329,8 @@ export const createCommand = (): Command =>
     .option("--t3-provider <instance-or-unambiguous-driver>", "T3 provider selection")
     .option("--t3-model <slug-or-alias>", "T3 model selection")
     .option("--t3-effort <catalog-value>", "T3 catalog effort selection")
-    .allowExcessArguments(false)
+    // Route excess arguments to the action's screened JSON/human rejection before discovery.
+    .allowExcessArguments(true)
     .addHelpText(
       "after",
       `
@@ -338,7 +339,7 @@ Examples:
   $ aw doctor --json   # Automation-safe JSON diagnostics
       `,
     )
-    .action(async (options: DoctorOptions) => {
-      const exitCode = await executeDoctor(options);
+    .action(async (options: DoctorOptions, command: Command) => {
+      const exitCode = await executeDoctor(options, ...command.args);
       process.exit(exitCode);
     });

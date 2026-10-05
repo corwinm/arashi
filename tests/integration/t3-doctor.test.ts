@@ -243,12 +243,52 @@ describe("doctor T3 command boundary A05/A06/A11/A21", () => {
       await f.dispose();
     }
   });
-  test("extra task positional rejected", async () => {
+  test.each(
+    ["ordinary", "t3", "t3-authenticated"].flatMap((mode) =>
+      [
+        { kind: "single", tail: ["unwanted-task"] },
+        { kind: "multiple", tail: ["unwanted-task", "CANARY-private"] },
+        { kind: "terminator", tail: ["--", "CANARY-private", "--unknown-private"] },
+      ].map(({ kind, tail }) => ({ kind, mode, tail })),
+    ),
+  )("CLI $mode excess $kind rejects before diagnostics", async ({ mode, tail }) => {
     const { f, cwd, env, args } = await fixture();
     try {
-      const result = await run(cwd, env, [entry, ...args, "unwanted-task", "--json"]);
-      expect(result.exitCode).toBe(1);
-      expect(await f.effects()).toEqual([]);
+      const before = await f.snapshot();
+      const commandArgs =
+        mode === "ordinary"
+          ? ["doctor"]
+          : [...args, ...(mode === "t3-authenticated" ? ["--t3-authenticated"] : [])];
+      for (const json of [true, false]) {
+        const result = await run(cwd, env, [
+          entry,
+          ...commandArgs,
+          ...(json ? ["--json"] : []),
+          ...tail,
+        ]);
+        expect(result.exitCode).toBe(1);
+        if (json) {
+          expect(JSON.parse(result.stdout)).toEqual({
+            command: "doctor",
+            error: {
+              code: "INVALID_OPTIONS",
+              message: "Doctor does not accept positional arguments.",
+            },
+            ok: false,
+            schemaVersion: 1,
+            warnings: [],
+          });
+          expect(result.stderr).toBe("");
+        } else {
+          expect(result.stdout).toBe("");
+          expect(result.stderr).toBe("Doctor does not accept positional arguments.\n");
+        }
+        expect(result.stdout + result.stderr).not.toContain("CANARY-private");
+        expect(result.stdout + result.stderr).not.toContain("--unknown-private");
+        expect(result.stdout + result.stderr).not.toContain(cwd);
+        expect(await f.effects()).toEqual([]);
+        expect(await f.snapshot()).toEqual(before);
+      }
     } finally {
       await f.dispose();
     }
