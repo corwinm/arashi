@@ -1688,16 +1688,21 @@ export const readConfigForDiagnostics = async (
     try {
       text = await readTrackedFileFromDefaultBranch(options.bareRepoPath, ".arashi/config.json");
     } catch (error) {
-      // Only a missing blob in an otherwise resolved branch is absence. All
-      // repository/ref/read failures remain errors; raw Git output stays private.
-      if (
-        error instanceof ArashiError &&
-        error.context.args[0] === "show" &&
-        /fatal: path '\.arashi\/config\.json' (does not exist in|exists on disk, but not in) /.test(
-          error.context.stderr,
-        )
-      )
-        return null;
+      // Inspect the reader-selected tree rather than localized stderr.
+      // Failed tree reads and existing unreadable entries remain errors.
+      const revision =
+        error instanceof ArashiError && error.context.args[0] === "show"
+          ? error.context.args[1]?.split(":")[0]
+          : undefined;
+      if (revision) {
+        const entry = await exec(
+          ["ls-tree", "-z", `${revision}^{tree}`, "--", ".arashi/config.json"],
+          options.bareRepoPath,
+        ).catch(() => null);
+        if (entry?.stdout === "") {
+          return null;
+        }
+      }
       throw new ConfigError("Failed to read tracked configuration");
     }
   } else {

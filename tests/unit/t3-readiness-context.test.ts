@@ -205,6 +205,111 @@ describe("read-only diagnostic configuration", () => {
       await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fixture.snapshot()).toEqual(before);
   });
+  test("translated Git absence preserves ordinary checkout discovery", async () => {
+    fixture = await createReadinessFixture();
+    const { exec } = await import("../../src/lib/git.ts");
+    const { ArashiError } = await import("../../src/lib/errors.ts");
+    const args = ["show", "main:.arashi/config.json"];
+    const original = await exec(args, fixture.repo).catch((error: unknown) => error);
+    expect(original).toBeInstanceOf(ArashiError);
+    const wrapper = join(fixture.home, "translated-git.cjs");
+    // Delegate every read to real Git, changing only human stderr, never status/stdout.
+    await writeFile(
+      wrapper,
+      `
+      const { spawnSync } = require('node:child_process');
+      const result = spawnSync('git', process.argv.slice(2), {
+        cwd: process.cwd(), env: process.env, timeout: 5000, maxBuffer: 1024 * 1024
+      });
+      if (result.error || result.signal) process.exit(125);
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.status && result.stderr.length
+        ? 'fatal : lecture Git impossible (message traduit)\\n' : result.stderr);
+      process.exit(result.status);
+    `,
+    );
+    const { spawn } = runtime;
+    const processes = vi
+      .spyOn(runtime, "spawn")
+      .mockImplementation((argv, options) =>
+        argv[0] === "git"
+          ? spawn([process.execPath, wrapper, ...argv.slice(1)], options)
+          : spawn(argv, options),
+      );
+    const translated = await exec(args, fixture.repo).catch((error: unknown) => error);
+    expect(translated).toBeInstanceOf(ArashiError);
+    expect((translated as InstanceType<typeof ArashiError>).context.exitCode).toBe(
+      (original as InstanceType<typeof ArashiError>).context.exitCode,
+    );
+    expect((translated as InstanceType<typeof ArashiError>).context.stdout).toBe(
+      (original as InstanceType<typeof ArashiError>).context.stdout,
+    );
+    expect((translated as InstanceType<typeof ArashiError>).context.stderr).toContain(
+      "message traduit",
+    );
+    const before = await fixture.snapshot();
+    await expect(
+      configModule.readConfigForDiagnostics(fixture.repo, { bareRepoPath: fixture.repo }),
+    ).resolves.toBeNull();
+    await expect(context({ cwd: fixture.repo })).resolves.toMatchObject({
+      checkout: fixture.repo,
+      workspace: null,
+      workspaceRoot: null,
+    });
+    processes.mockRestore();
+    expect(await fixture.snapshot()).toEqual(before);
+  });
+
+  test.each(["unborn HEAD", "corrupt HEAD", "missing tracked blob", "malformed tracked config"])(
+    "does not classify %s as tracked absence",
+    async (kind) => {
+      fixture = await createReadinessFixture();
+      const { exec } = await import("../../src/lib/git.ts");
+      if (kind === "unborn HEAD") {
+        await exec(["update-ref", "-d", "refs/heads/main"], fixture.repo);
+      } else if (kind === "corrupt HEAD") {
+        await writeFile(join(fixture.repo, ".git/refs/heads/main"), `${"1".repeat(40)}\n`);
+      } else {
+        const path = join(fixture.repo, ".arashi/config.json");
+        await mkdir(join(fixture.repo, ".arashi"));
+        await writeFile(path, kind === "malformed tracked config" ? "{" : JSON.stringify(raw));
+        await exec(["add", "--", ".arashi/config.json"], fixture.repo);
+        await exec(["commit", "-m", "tracked config boundary"], fixture.repo);
+        if (kind === "missing tracked blob") {
+          const oid = (
+            await exec(["rev-parse", "HEAD:.arashi/config.json"], fixture.repo)
+          ).stdout.trim();
+          await rm(join(fixture.repo, ".git/objects", oid.slice(0, 2), oid.slice(2)));
+        }
+        await rm(path);
+      }
+      // The shared snapshot requires valid refs; inspect broken-ref fixture bytes directly.
+      const snapshot = () =>
+        kind === "unborn HEAD" || kind === "corrupt HEAD"
+          ? Promise.all([
+              readFile(join(fixture!.repo, ".git/HEAD")),
+              readFile(join(fixture!.repo, ".git/refs/heads/main")).catch(
+                (error: NodeJS.ErrnoException) => {
+                  if (error.code === "ENOENT") {
+                    return null;
+                  }
+                  throw error;
+                },
+              ),
+            ])
+          : fixture!.snapshot();
+      const before = await snapshot();
+      await expect(
+        configModule.readConfigForDiagnostics(fixture.repo, { bareRepoPath: fixture.repo }),
+      ).rejects.toBeInstanceOf(
+        kind === "malformed tracked config"
+          ? configModule.ConfigParseError
+          : configModule.ConfigError,
+      );
+      expect(await snapshot()).toEqual(before);
+    },
+  );
+
   test("tracked absence is null but repository read failure remains an error", async () => {
     fixture = await createReadinessFixture();
     const before = await fixture.snapshot();
