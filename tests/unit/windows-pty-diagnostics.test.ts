@@ -4,8 +4,8 @@ import { runInNewContext } from "node:vm";
 
 // Execute the real harness with only its filesystem/PTY imports injected. No native PTY is needed.
 const harness = readFileSync(new URL("../windows/pty-command.mjs", import.meta.url), "utf8")
-  .replace(/^import \{ writeFileSync \} from "node:fs";\n/m, "")
-  .replace(/^import \* as pty from "node-pty";\n/m, "");
+  .replace(/^import \{ writeFileSync \} from "node:fs";\r?\n/m, "")
+  .replace(/^import \* as pty from "node-pty";\r?\n/m, "");
 const reusedOutput =
   "fixture prompt __ARASHI_CONPTY_REUSE_PROMPT__ __ARASHI_CONPTY_REUSED__:arashi-terminal-reused";
 
