@@ -85,10 +85,12 @@ async function discoverWorkspace(identity: CheckoutIdentity | null): Promise<{
   while (dirname(ancestor) !== ancestor) {
     let hasGit = false;
     try {
-      await stat(join(ancestor, ".git"));
+      await lstat(join(ancestor, ".git"));
       hasGit = true;
-    } catch {
-      /* Absent metadata. */
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
     }
     if (hasGit) {
       const parentIdentity = await checkoutIdentity(ancestor);
@@ -105,8 +107,28 @@ async function discoverWorkspace(identity: CheckoutIdentity | null): Promise<{
     // Unborn repositories are legitimate checkouts with no tracked config.
     try {
       await exec(["rev-parse", "--verify", "HEAD"], entry.primary);
-    } catch {
-      continue;
+    } catch (error) {
+      // A missing HEAD ref is unborn; malformed/unreadable refs are not.
+      try {
+        const refs = await exec(["show-ref", "--head"], entry.primary);
+        if (
+          refs.stderr === "" &&
+          !refs.stdout.split(/\r?\n/u).some((line) => line.endsWith(" HEAD"))
+        ) {
+          continue;
+        }
+      } catch (refError) {
+        if (
+          refError instanceof ArashiError &&
+          refError.context.exitCode === 1 &&
+          refError.context.stdout === "" &&
+          refError.context.stderr === ""
+        ) {
+          continue;
+        }
+        throw refError;
+      }
+      throw error;
     }
     const loaded = await readConfigForDiagnostics(entry.primary, { bareRepoPath: entry.primary });
     if (loaded) return { loaded, mainRoot: entry.primary, root: entry.primary };
@@ -115,9 +137,16 @@ async function discoverWorkspace(identity: CheckoutIdentity | null): Promise<{
 }
 
 async function checkoutIdentity(path: string): Promise<CheckoutIdentity | null> {
-  const bare = await exec(["rev-parse", "--is-bare-repository"], path).catch(
+  // Only this diagnostic classification probe needs stable human error text.
+  // Do not change the caller's locale or ordinary Git commands.
+  const bare = await exec(["rev-parse", "--is-bare-repository"], path, { LC_ALL: "C" }).catch(
     async (error: unknown) => {
-      if (!(error instanceof ArashiError) || error.code !== "NOT_A_REPOSITORY") {
+      if (
+        !(error instanceof ArashiError) ||
+        error.context.exitCode !== 128 ||
+        error.code !== "NOT_A_REPOSITORY" ||
+        process.env.GIT_DIR !== undefined
+      ) {
         throw error;
       }
       // Broken repository metadata is an identity failure, not global readiness.
@@ -130,6 +159,24 @@ async function checkoutIdentity(path: string): Promise<CheckoutIdentity | null> 
           if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") {
             throw inspectionError;
           }
+        }
+        // A damaged bare repository has no .git entry. Two surviving layout
+        // Entries are evidence of metadata, not proof of ordinary absence.
+        let bareEntries = 0;
+        for (const name of ["HEAD", "objects", "refs"]) {
+          try {
+            const entry = await lstat(join(ancestor, name));
+            if (name === "HEAD" ? entry.isFile() : entry.isDirectory()) {
+              bareEntries++;
+            }
+          } catch (inspectionError) {
+            if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") {
+              throw inspectionError;
+            }
+          }
+        }
+        if (bareEntries >= 2) {
+          throw error;
         }
         const parent = dirname(ancestor);
         if (parent === ancestor) {

@@ -26,7 +26,11 @@ import { normalizeSpawnEnvironment } from "./shell-directives.ts";
  * const result = await execRaw(['status', '--porcelain', '-z'], '/path/to/repo');
  * console.log(result.stdout);
  */
-export async function execRaw(args: string[], cwd: string): Promise<RawCommandResult> {
+export async function execRaw(
+  args: string[],
+  cwd: string,
+  env: Record<string, string | undefined> = {},
+): Promise<RawCommandResult> {
   // T012: Input validation
   if (!args || args.length === 0) {
     throw new Error("Git command arguments cannot be empty");
@@ -41,7 +45,7 @@ export async function execRaw(args: string[], cwd: string): Promise<RawCommandRe
   try {
     proc = runtime.spawn(["git", ...args], {
       cwd,
-      env: normalizeSpawnEnvironment(process.env),
+      env: normalizeSpawnEnvironment({ ...process.env, ...env }),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -111,8 +115,12 @@ export async function execRaw(args: string[], cwd: string): Promise<RawCommandRe
   };
 }
 
-export async function exec(args: string[], cwd: string): Promise<CommandResult> {
-  const result = await execRaw(args, cwd);
+export async function exec(
+  args: string[],
+  cwd: string,
+  env: Record<string, string | undefined> = {},
+): Promise<CommandResult> {
+  const result = await execRaw(args, cwd, env);
   return {
     exitCode: result.exitCode,
     stderr: result.stderr.toString("utf8"),

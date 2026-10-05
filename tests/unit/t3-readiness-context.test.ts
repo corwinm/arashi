@@ -393,6 +393,145 @@ async function git(args: string[], cwd: string) {
   return (await import("../../src/lib/git.ts")).exec(args, cwd);
 }
 
+describe("readiness locale-independent Git identity", () => {
+  async function translatedGit() {
+    const f = await contextFixture();
+    vi.stubEnv("LC_ALL", "fr_FR.UTF-8");
+    const wrapper = join(f.home, "identity-git.cjs");
+    await writeFile(
+      wrapper,
+      `
+      const { spawnSync } = require('node:child_process');
+      const result = spawnSync('git', process.argv.slice(2), {
+        cwd: process.cwd(), env: process.env, timeout: 5000, maxBuffer: 1024 * 1024
+      });
+      if (result.error || result.signal) process.exit(125);
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.status && result.stderr.length && process.env.LC_ALL !== 'C'
+        ? 'fatal : pas de dépôt Git (message traduit)\\n' : result.stderr);
+      process.exit(result.status);
+    `,
+    );
+    const { spawn } = runtime;
+    vi.spyOn(runtime, "spawn").mockImplementation((argv, options) =>
+      argv[0] === "git"
+        ? spawn([process.execPath, wrapper, ...argv.slice(1)], options)
+        : spawn(argv, options),
+    );
+    return f;
+  }
+
+  test("translated real non-repository failure allows global context without changing ordinary Git locale", async () => {
+    const f = await translatedGit();
+    const { ArashiError } = await import("../../src/lib/errors.ts");
+    const failure = await git(["rev-parse", "--is-bare-repository"], f.home).catch(
+      (error) => error,
+    );
+    expect(failure).toBeInstanceOf(ArashiError);
+    expect(failure.context).toMatchObject({ exitCode: 128, stdout: "" });
+    expect(failure.context.stderr).toContain("message traduit");
+    expect(failure.code).not.toBe("NOT_A_REPOSITORY");
+    const before = await f.snapshot();
+    await expect(context({ cwd: f.home })).resolves.toMatchObject({
+      checkout: null,
+      workspace: null,
+      workspaceRoot: null,
+    });
+    expect(process.env.LC_ALL).toBe("fr_FR.UTF-8");
+    const ordinary = await git(["rev-parse", "--is-bare-repository"], f.home).catch(
+      (error) => error,
+    );
+    expect(ordinary.context.stderr).toContain("message traduit");
+    expect(await f.snapshot()).toEqual(before);
+  });
+
+  test("translated probe retains Git parent lookup and valid bare context", async () => {
+    const f = await translatedGit();
+    const nested = join(f.repo, "ordinary", "nested");
+    await mkdir(nested, { recursive: true });
+    await expect(context({ cwd: nested })).resolves.toMatchObject({ checkout: f.repo });
+    const bare = join(f.root, "bare.git");
+    await git(["init", "--bare", bare], f.root);
+    await expect(context({ cwd: bare })).resolves.toMatchObject({ checkout: null });
+    vi.stubEnv("GIT_DIR", bare);
+    await expect(context({ cwd: f.home })).resolves.toMatchObject({ checkout: null });
+  });
+
+  test.each(["HEAD", "objects", "refs"])("a lone %s name is not bare metadata", async (name) => {
+    const f = await translatedGit();
+    if (name === "HEAD") {
+      await writeFile(join(f.home, name), "ordinary file");
+    } else {
+      await mkdir(join(f.home, name));
+    }
+    await expect(context({ cwd: f.home })).resolves.toMatchObject({ checkout: null });
+  });
+
+  test.each([
+    "file",
+    "directory",
+    "permissions",
+    "ancestor",
+    "GIT_DIR",
+    "bare HEAD",
+    "bare objects",
+    "bare refs",
+  ])("retains %s metadata failure instead of global absence", async (kind) => {
+    const f = await translatedGit();
+    // Calibrate metadata rejection independently of the translated-error guard.
+    vi.stubEnv("LC_ALL", "C");
+    let cwd = join(f.root, "broken");
+    await mkdir(cwd);
+    if (kind === "GIT_DIR") vi.stubEnv("GIT_DIR", join(f.root, "missing-git"));
+    else if (kind.startsWith("bare ")) {
+      await git(["init", "--bare"], cwd);
+      await rm(join(cwd, kind.slice(5)), { recursive: true });
+    } else if (kind === "file") await writeFile(join(cwd, ".git"), "gitdir: missing\n");
+    else {
+      await mkdir(join(cwd, ".git"));
+      if (kind === "permissions") await chmod(join(cwd, ".git"), 0);
+      if (kind === "ancestor") {
+        cwd = join(cwd, "nested");
+        await mkdir(cwd);
+      }
+    }
+    try {
+      await expect(context({ cwd })).rejects.toThrow();
+      vi.stubEnv("LC_ALL", "fr_FR.UTF-8");
+      await expect(context({ cwd })).rejects.toThrow();
+    } finally {
+      if (kind === "permissions") await chmod(join(cwd, ".git"), 0o700);
+    }
+  });
+
+  test("independent child does not conceal dangling containing Git metadata", async () => {
+    const f = await translatedGit();
+    await symlink("missing-metadata", join(f.root, ".git"));
+    await expect(context({ cwd: f.repo })).rejects.toThrow();
+  });
+
+  test("translated malformed HEAD ref is not an unborn repository", async () => {
+    const f = await translatedGit();
+    await writeFile(join(f.repo, ".git/refs/heads/main"), "invalid-ref\n");
+    await expect(context({ cwd: f.repo })).rejects.toThrow();
+  });
+
+  test("translated unborn HEAD with other valid refs remains an ordinary checkout", async () => {
+    const f = await translatedGit();
+    await git(["symbolic-ref", "HEAD", "refs/heads/unborn"], f.repo);
+    await expect(context({ cwd: f.repo })).resolves.toMatchObject({
+      checkout: f.repo,
+      workspace: null,
+    });
+  });
+
+  test("non-repository cwd does not hide other nonzero Git failures", async () => {
+    const f = await translatedGit();
+    await writeFile(join(f.home, ".gitconfig"), "[invalid\n");
+    await expect(context({ cwd: f.home })).rejects.toThrow();
+  });
+});
+
 describe("readiness exact context A01 A04", () => {
   test.each([
     "outside",
