@@ -84,6 +84,30 @@ For a single repository without persisted Arashi configuration, use `aw init --z
 
 Run `aw --help`, `aw <command> --help`, or use the [complete command reference](https://arashi.haphazard.dev/commands/) for options and examples.
 
+## T3 readiness
+
+Check an existing checkout without running ordinary workspace health checks:
+
+```bash
+aw doctor --t3 --path /path/to/checkout
+aw doctor --t3 --path /path/to/checkout --t3-authenticated --json
+```
+
+Preview does not acquire an authenticated session. `--t3-authenticated` explicitly
+consents to using the selected T3 profile's administrator authority to issue a
+short-lived read session, read the live catalog and exact project's defaults, then
+revoke only that session and verify its absence. It does not create projects,
+threads, or tasks, repair configuration, or write handoff receipts. Project-default
+selection remains provisional until authenticated checks complete.
+
+Use `--t3-cli`, `--t3-base-dir`, `--t3-provider`, `--t3-model`, and `--t3-effort` to
+override saved settings; these options and `--path` require `--t3`. Output contains
+screened findings rather than tokens or raw server responses. Exit status is `0`
+for no blocking findings and `1` for a blocking or failed check, including failed
+cleanup or cleanup whose exact absence could not be verified. A passing
+preview is not authenticated readiness; inspect the reported mode and findings.
+Ordinary `aw doctor` behavior is unchanged.
+
 ## Shell integration
 
 Install shell integration for parent-shell directory switching and completion in Bash, Zsh, or Fish:
