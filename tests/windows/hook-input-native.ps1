@@ -17,6 +17,7 @@ $hooks = Join-Path $testHome ".arashi\hooks"
 $record = Join-Path $temp "hook-input.log"
 $ptyHelper = Join-Path $PSScriptRoot "pty-command.mjs"
 New-Item -ItemType Directory -Force -Path $repo, $hooks | Out-Null
+$completed = $false
 $previousHome = $env:HOME
 $previousTeam = $env:TEAM
 $env:HOME = $testHome
@@ -209,13 +210,17 @@ Set-Content -NoNewline -Path '$timeoutChildPid' -Value `$child.Id
 
     Set-HookTimeout 10000
     $interruptFinallyMarker = Join-Path $temp "interrupt-finally.marker"
+    $interruptTrace = Join-Path $temp "interrupt.trace"
     @"
+[IO.File]::AppendAllText('$interruptTrace', 'ready:' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + [Environment]::NewLine)
 try {
   `$null = Read-Host "interrupt grace answer"
 }
 finally {
+  [IO.File]::AppendAllText('$interruptTrace', 'finally-enter:' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + [Environment]::NewLine)
   Start-Sleep -Milliseconds 100
   [IO.File]::WriteAllText('$interruptFinallyMarker', 'finalized')
+  [IO.File]::AppendAllText('$interruptTrace', 'finally-complete:' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + [Environment]::NewLine)
 }
 "@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
     $interruptGraceResult = Invoke-PtySession "interrupt grace answer" "__CTRL_C__" @($binary, "create", "feature/windows-interrupt-grace")
@@ -283,6 +288,7 @@ Set-Content -NoNewline -Path '$interruptChildPid' -Value `$child.Id
   if (Compare-Object $expected $actual) {
     throw "Native hook-input record did not match. Actual: $($actual -join '; ')"
   }
+  $completed = $true
 }
 finally {
   $env:HOME = $previousHome
@@ -294,5 +300,17 @@ finally {
   }
   Remove-Item Env:HOOK_INPUT_RECORD -ErrorAction SilentlyContinue
   Remove-Item Env:WRAPPER_KIND -ErrorAction SilentlyContinue
-  Remove-Item -Recurse -Force $temp -ErrorAction SilentlyContinue
+  if ($completed) {
+    Remove-Item -Recurse -Force $temp -ErrorAction SilentlyContinue
+  }
+  else {
+    Write-Warning "Native hook-input failure evidence retained at: $temp"
+    if ($env:RUNNER_TEMP) {
+      $evidence = Join-Path $env:RUNNER_TEMP "arashi-hook-evidence"
+      New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+      Get-ChildItem -LiteralPath $temp -File |
+        Where-Object { $_.Name -like "pty-result-*.json" -or $_.Name -eq "interrupt.trace" -or $_.Name -eq "hook-input.log" } |
+        Copy-Item -Destination $evidence
+    }
+  }
 }
