@@ -15,10 +15,9 @@ import {
   normalizeWorktreesDir,
 } from "./worktree-location.ts";
 import { basename, dirname, join, resolve } from "path";
-import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
+import { exec, readTrackedFileForDiagnostics, readTrackedFileFromDefaultBranch } from "./git.ts";
 import { lstat, mkdir, realpath } from "fs/promises";
 import { MAX_DIAGNOSTIC_CONFIG_BYTES, readDiagnosticConfigText } from "./diagnostic-config-read.ts";
-import { ArashiError } from "./errors.ts";
 import { warn } from "./logger.ts";
 import { isValidRequestedBaseBranch, normalizeLogicalBranchName } from "./git-branch-name.ts";
 import { normalizeMaterializationPath } from "./materialization.ts";
@@ -1687,23 +1686,14 @@ export const readConfigForDiagnostics = async (
     configPath = `${options.bareRepoPath}:.arashi/config.json`;
     source = "repository-content";
     try {
-      text = await readTrackedFileFromDefaultBranch(options.bareRepoPath, ".arashi/config.json");
-    } catch (error) {
-      // Inspect the reader-selected tree rather than localized stderr.
-      // Failed tree reads and existing unreadable entries remain errors.
-      const revision =
-        error instanceof ArashiError && error.context.args[0] === "show"
-          ? error.context.args[1]?.split(":")[0]
-          : undefined;
-      if (revision) {
-        const entry = await exec(
-          ["ls-tree", "-z", `${revision}^{tree}`, "--", ".arashi/config.json"],
-          options.bareRepoPath,
-        ).catch(() => null);
-        if (entry?.stdout === "") {
-          return null;
-        }
-      }
+      const tracked = await readTrackedFileForDiagnostics(
+        options.bareRepoPath,
+        ".arashi/config.json",
+        MAX_DIAGNOSTIC_CONFIG_BYTES,
+      );
+      if (tracked === null) return null;
+      text = tracked;
+    } catch {
       throw new ConfigError("Failed to read tracked configuration");
     }
   } else {

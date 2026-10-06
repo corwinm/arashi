@@ -193,11 +193,20 @@ describe("read-only diagnostic configuration", () => {
     const result = await configModule.readConfigForDiagnostics(fixture.repo, {
       bareRepoPath: fixture.repo,
     });
-    expect(processes.mock.calls.map(([argv]) => argv)).toEqual([
+    const argv = processes.mock.calls.map(([args]) => args);
+    expect(argv.slice(0, 3)).toEqual([
       ["git", "symbolic-ref", "--short", "HEAD"],
       ["git", "show-ref", "--verify", "refs/heads/main"],
-      ["git", "show", "main:.arashi/config.json"],
+      ["git", "rev-parse", "--verify", "main^{tree}"],
     ]);
+    expect(argv.slice(3).map((args) => args.slice(0, 3))).toEqual([
+      ["git", "ls-tree", "-z"],
+      ["git", "cat-file", "-t"],
+      ["git", "cat-file", "-s"],
+      ["git", "cat-file", "-p"],
+    ]);
+    expect(argv[4]?.[3]).toBe(argv[5]?.[3]);
+    expect(argv[5]?.[3]).toBe(argv[6]?.[3]);
     processes.mockRestore();
     expect(result?.source).toBe("repository-content");
     expect(result?.config).toEqual(configModule.normalizeConfig(raw));
@@ -1052,7 +1061,18 @@ describe("readiness tracked-primary effect boundary", () => {
       ["git", "rev-parse", "--verify", "HEAD"],
       ["git", "symbolic-ref", "--short", "HEAD"],
       ["git", "show-ref", "--verify", "refs/heads/main"],
-      ["git", "show", "main:.arashi/config.json"],
+      ["git", "rev-parse", "--verify", "main^{tree}"],
+      [
+        "git",
+        "ls-tree",
+        "-z",
+        expect.stringMatching(/^[0-9a-f]{40}$/),
+        "--",
+        ".arashi/config.json",
+      ],
+      ["git", "cat-file", "-t", expect.stringMatching(/^[0-9a-f]{40}$/)],
+      ["git", "cat-file", "-s", expect.stringMatching(/^[0-9a-f]{40}$/)],
+      ["git", "cat-file", "-p", expect.stringMatching(/^[0-9a-f]{40}$/)],
     ]);
     processes.mockRestore();
     expect(await f.snapshot()).toEqual(before);
