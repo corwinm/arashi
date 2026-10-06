@@ -573,7 +573,7 @@ export async function readTrackedFileForDiagnostics(
     stderr: "",
     exitCode: 0,
   });
-  const branch = await resolveDefaultBranchForTrackedRead(repoPath, runGit);
+  const branch = await resolveDefaultBranchForTrackedRead(repoPath, runGit, true);
   const tree = (
     await runGit(["rev-parse", "--verify", `${branch}^{tree}`], repoPath)
   ).stdout.trim();
@@ -607,13 +607,21 @@ export async function readTrackedFileForDiagnostics(
 async function resolveDefaultBranchForTrackedRead(
   repoPath: string,
   runGit: typeof exec = exec,
+  qualifiedRefs = false,
 ): Promise<string> {
+  // Diagnostics retain branch identity through pinning even with a colliding tag.
   try {
-    const head = await runGit(["symbolic-ref", "--short", "HEAD"], repoPath);
+    const head = await runGit(
+      qualifiedRefs ? ["symbolic-ref", "HEAD"] : ["symbolic-ref", "--short", "HEAD"],
+      repoPath,
+    );
     const branch = head.stdout.trim();
-    if (branch.length > 0) {
+    if (branch.length > 0 && (!qualifiedRefs || branch.startsWith("refs/heads/"))) {
       try {
-        await runGit(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
+        await runGit(
+          ["show-ref", "--verify", qualifiedRefs ? branch : `refs/heads/${branch}`],
+          repoPath,
+        );
         return branch;
       } catch {
         // HEAD may reference an unset branch in a bare repository.
@@ -627,13 +635,14 @@ async function resolveDefaultBranchForTrackedRead(
   for (const branch of ["main", "master", "develop"]) {
     try {
       await runGit(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
-      return branch;
+      return qualifiedRefs ? `refs/heads/${branch}` : branch;
     } catch {
       // Try next branch candidate
     }
   }
 
-  const refs = await runGit(["for-each-ref", "--format=%(refname:short)", "refs/heads"], repoPath);
+  const refFormat = qualifiedRefs ? "--format=%(refname)" : "--format=%(refname:short)";
+  const refs = await runGit(["for-each-ref", refFormat, "refs/heads"], repoPath);
   const first = refs.stdout
     .split("\n")
     .map((value) => value.trim())
@@ -641,7 +650,7 @@ async function resolveDefaultBranchForTrackedRead(
 
   if (!first) {
     throw new ArashiError("Unable to resolve default branch for tracked file read", {
-      args: ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+      args: ["for-each-ref", refFormat, "refs/heads"],
       cwd: repoPath,
       exitCode: refs.exitCode,
       stderr: refs.stderr,

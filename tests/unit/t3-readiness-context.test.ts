@@ -195,9 +195,9 @@ describe("read-only diagnostic configuration", () => {
     });
     const argv = processes.mock.calls.map(([args]) => args);
     expect(argv.slice(0, 3)).toEqual([
-      ["git", "symbolic-ref", "--short", "HEAD"],
+      ["git", "symbolic-ref", "HEAD"],
       ["git", "show-ref", "--verify", "refs/heads/main"],
-      ["git", "rev-parse", "--verify", "main^{tree}"],
+      ["git", "rev-parse", "--verify", "refs/heads/main^{tree}"],
     ]);
     expect(argv.slice(3).map((args) => args.slice(0, 3))).toEqual([
       ["git", "ls-tree", "-z"],
@@ -1059,9 +1059,9 @@ describe("readiness tracked-primary effect boundary", () => {
       ["git", "rev-parse", "--git-common-dir"],
       ["git", "worktree", "list", "--porcelain", "-z"],
       ["git", "rev-parse", "--verify", "HEAD"],
-      ["git", "symbolic-ref", "--short", "HEAD"],
+      ["git", "symbolic-ref", "HEAD"],
       ["git", "show-ref", "--verify", "refs/heads/main"],
-      ["git", "rev-parse", "--verify", "main^{tree}"],
+      ["git", "rev-parse", "--verify", "refs/heads/main^{tree}"],
       [
         "git",
         "ls-tree",

@@ -222,7 +222,7 @@ posixTest.each(["main", "master", "develop", "topic", "detached"])(
     expect(entries.every((r) => r.noLazy === "1" && !r.directive && !r.shell)).toBe(true);
     expect(entries.map((r) => r.args.slice(0, 2).join(" "))).toEqual(
       expect.arrayContaining([
-        "symbolic-ref --short",
+        "symbolic-ref HEAD",
         "show-ref --verify",
         "rev-parse --verify",
         "ls-tree -z",

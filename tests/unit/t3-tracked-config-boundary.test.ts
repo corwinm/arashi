@@ -73,6 +73,10 @@ async function fixture(bytes: number, mode = "normal") {
       p.stdout.on('data',b=>{bytes+=b.length;process.stdout.write(b)});p.stderr.pipe(process.stderr);
       p.on('close',code=>{
         record({args,event:'complete',bytes});
+        if(args.join(' ')==='show-ref --verify refs/heads/main' && code===0) {
+          if(${JSON.stringify(mode)}==='missing-ref') fs.unlinkSync('.git/refs/heads/main');
+          if(${JSON.stringify(mode)}==='corrupt-ref') fs.writeFileSync('.git/refs/heads/main','PRIVATE_REF_CANARY');
+        }
         if(${JSON.stringify(mode)}==='mutate' && args[0]==='cat-file' && args[1]==='-s')
           spawnSync('git',['update-ref','refs/heads/main',${JSON.stringify(replacement)}],{env:process.env});
         process.exitCode=code;
@@ -96,7 +100,9 @@ async function fixture(bytes: number, mode = "normal") {
   });
   return {
     buffers,
+    git,
     oid,
+    originalCommit,
     records: async () =>
       (await readFile(ledger, "utf8"))
         .trim()
@@ -165,10 +171,127 @@ test.each(["main", "master", "develop", "topic"])(
       "1.0.0",
     );
     expect(
-      (await f.records()).some((r) => r.args?.join(" ") === `rev-parse --verify ${branch}^{tree}`),
+      (await f.records()).some(
+        (r) => r.args?.join(" ") === `rev-parse --verify refs/heads/${branch}^{tree}`,
+      ),
     ).toBe(true);
   },
 );
+test.each([
+  ["main", "current", "different"],
+  ["main", "current", "malformed"],
+  ["master", "current", "different"],
+  ["develop", "current", "different"],
+  ["topic/custom", "current", "different"],
+  ["main", "unset", "different"],
+  ["master", "unset", "different"],
+  ["develop", "unset", "different"],
+  ["topic/custom", "unset", "different"],
+  ["main", "detached", "different"],
+])(
+  "selected %s branch with %s HEAD ignores %s same-name tag config",
+  async (branch, head, kind) => {
+    const f = await fixture(512);
+    if (branch !== "main") {
+      f.git("branch", "-m", "main", branch!);
+    }
+    const stale =
+      kind === "malformed"
+        ? "PRIVATE_TAG_CANARY{"
+        : JSON.stringify({ repos: {}, reposDir: "./stale", version: "1.0.0" });
+    await writeFile(join(f.root, ".arashi/config.json"), stale);
+    f.git("add", ".arashi/config.json");
+    f.git("commit", "-m", "stale tag configuration");
+    f.git("tag", branch!);
+    if (head === "current" && branch !== "main") {
+      f.git("branch", "main", `refs/tags/${branch}`);
+    }
+    f.git("update-ref", `refs/heads/${branch}`, f.originalCommit);
+    if (head === "unset") {
+      f.git("symbolic-ref", "HEAD", "refs/heads/unset");
+    }
+    if (head === "detached") {
+      f.git("update-ref", "--no-deref", "HEAD", f.originalCommit);
+    }
+    await rm(join(f.root, ".arashi/config.json"));
+
+    await expect(readConfigForDiagnostics(f.root, { bareRepoPath: f.root })).resolves.toMatchObject(
+      {
+        config: { reposDir: `./${"é".repeat(Math.floor((512 - 100) / 2))}`, version: "1.0.0" },
+        source: "repository-content",
+      },
+    );
+    const content = (await f.records()).filter(
+      (r) => r.event === "entry" && r.args?.[0] === "cat-file" && r.args[1] === "-p",
+    );
+    expect(content.map((r) => r.args?.[2])).toEqual([f.oid]);
+  },
+);
+
+test("HEAD tag cannot override detached HEAD or the existing default-branch fallback", async () => {
+  const f = await fixture(512, "mutate");
+  const replacement = f.git("rev-parse", "HEAD@{1}");
+  f.git("update-ref", "refs/tags/HEAD", replacement);
+  f.git("update-ref", "--no-deref", "HEAD", replacement);
+  await expect(readConfigForDiagnostics(f.root, { bareRepoPath: f.root })).resolves.toMatchObject({
+    config: { version: "1.0.0" },
+  });
+  const content = (await f.records()).filter(
+    (r) => r.event === "entry" && r.args?.[0] === "cat-file" && r.args[1] === "-p",
+  );
+  expect(content.map((r) => r.args?.[2])).toEqual([f.oid]);
+});
+
+test("symbolic HEAD outside branch namespace retains branch fallback", async () => {
+  const f = await fixture(512, "mutate");
+  const replacement = f.git("rev-parse", "HEAD@{1}");
+  f.git("tag", "selected-tag", replacement);
+  f.git("symbolic-ref", "HEAD", "refs/tags/selected-tag");
+  await expect(readConfigForDiagnostics(f.root, { bareRepoPath: f.root })).resolves.toMatchObject({
+    config: { version: "1.0.0" },
+  });
+  const content = (await f.records()).filter(
+    (r) => r.event === "entry" && r.args?.[0] === "cat-file" && r.args[1] === "-p",
+  );
+  expect(content.map((r) => r.args?.[2])).toEqual([f.oid]);
+});
+
+test.each(["missing-ref", "corrupt-ref"])(
+  "selected %s errors stay screened without tag or branch fallback",
+  async (mode) => {
+    const f = await fixture(512, mode);
+    f.git("tag", "main", f.originalCommit);
+    f.git("branch", "master", f.originalCommit);
+    const error = await readConfigForDiagnostics(f.root, { bareRepoPath: f.root }).catch(
+      (error: unknown) => error,
+    );
+    expect(error).toBeInstanceOf(ConfigError);
+    expect(String(error)).toBe("ConfigError: Failed to read tracked configuration");
+    expect(JSON.stringify(error)).not.toContain(f.root);
+    expect(JSON.stringify(error)).not.toContain("PRIVATE_REF_CANARY");
+    const records = (await f.records()).filter((r) => r.event === "entry");
+    expect(records.filter((r) => r.args?.[0] === "rev-parse").map((r) => r.args)).toEqual([
+      ["rev-parse", "--verify", "refs/heads/main^{tree}"],
+    ]);
+    expect(
+      records.some((r) => r.args?.[0] === "cat-file" || r.args?.[2] === "refs/heads/master"),
+    ).toBe(false);
+  },
+);
+
+test("ordinary reader retains its existing unqualified same-name tag semantics", async () => {
+  const f = await fixture(512);
+  await writeFile(join(f.root, ".arashi/config.json"), "ordinary-tag-content");
+  f.git("add", ".arashi/config.json");
+  f.git("commit", "-m", "ordinary tag");
+  f.git("tag", "main");
+  f.git("update-ref", "refs/heads/main", f.originalCommit);
+  await rm(join(f.root, ".arashi/config.json"));
+  await expect(readTrackedFileFromDefaultBranch(f.root, ".arashi/config.json")).resolves.toBe(
+    "ordinary-tag-content",
+  );
+});
+
 test("ordinary reader continues accepting above diagnostic budget", async () => {
   const f = await fixture(limit + 1);
   expect(
