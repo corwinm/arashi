@@ -80,12 +80,33 @@ exit $exitCode
   });
 
   const started = Date.now();
+  const events = [];
+  const recordEvent = (event) => events.push({ event, atMs: Date.now() - started });
   let output = "";
+  const saveResult = (exitCode) => {
+    try {
+      writeFileSync(
+        config.resultPath,
+        JSON.stringify({
+          started,
+          events,
+          durationMs: Date.now() - started,
+          exitCode,
+          output,
+          reused,
+        }),
+      );
+    } catch {
+      console.error("Could not save ConPTY session diagnostics");
+    }
+  };
   let promptObserved = false;
   let reuseAnswered = false;
   let reused = false;
   const timer = setTimeout(
     () => {
+      recordEvent("timeout");
+      saveResult(124);
       terminal.kill();
       console.error(`ConPTY session did not finish. Output:\n${output}`);
       process.exit(124);
@@ -98,7 +119,9 @@ exit $exitCode
     process.stdout.write(data);
     if (!promptObserved && output.includes(config.prompt)) {
       promptObserved = true;
+      recordEvent("prompt");
       if (config.response === "__CTRL_C__") {
+        recordEvent("ctrl-c");
         terminal.write("\x03");
       } else if (config.response !== "__NO_INPUT__") {
         terminal.write(`${config.response}\r`);
@@ -106,6 +129,7 @@ exit $exitCode
     }
     if (!reuseAnswered && output.includes(reusePrompt)) {
       reuseAnswered = true;
+      recordEvent("reuse-prompt");
       terminal.write(`${reuseAnswer}\r`);
     }
     if (output.includes(`__ARASHI_CONPTY_REUSED__:${reuseAnswer}`)) {
@@ -114,10 +138,8 @@ exit $exitCode
   });
   terminal.onExit(({ exitCode }) => {
     clearTimeout(timer);
-    writeFileSync(
-      config.resultPath,
-      JSON.stringify({ durationMs: Date.now() - started, exitCode, output, reused }),
-    );
+    recordEvent("exit");
+    saveResult(exitCode);
     if (!promptObserved) {
       console.error(`ConPTY prompt was not observed: ${config.prompt}`);
       process.exit(125);

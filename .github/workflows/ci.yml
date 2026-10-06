@@ -290,3 +290,12 @@ jobs:
         run: |
           ./tests/windows/hook-input-native.ps1
           ./tests/windows/repository-remove-hooks-native.ps1
+
+      - name: Preserve Windows hook failure diagnostics
+        if: ${{ failure() && runner.os == 'Windows' && steps.windows-hooks.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-hook-failure-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/arashi-hook-evidence
+          if-no-files-found: warn
+          retention-days: 7

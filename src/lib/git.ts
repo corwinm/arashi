@@ -26,7 +26,11 @@ import { normalizeSpawnEnvironment } from "./shell-directives.ts";
  * const result = await execRaw(['status', '--porcelain', '-z'], '/path/to/repo');
  * console.log(result.stdout);
  */
-export async function execRaw(args: string[], cwd: string): Promise<RawCommandResult> {
+export async function execRaw(
+  args: string[],
+  cwd: string,
+  env: Record<string, string | undefined> = {},
+): Promise<RawCommandResult> {
   // T012: Input validation
   if (!args || args.length === 0) {
     throw new Error("Git command arguments cannot be empty");
@@ -41,7 +45,7 @@ export async function execRaw(args: string[], cwd: string): Promise<RawCommandRe
   try {
     proc = runtime.spawn(["git", ...args], {
       cwd,
-      env: normalizeSpawnEnvironment(process.env),
+      env: normalizeSpawnEnvironment({ ...process.env, ...env }),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -111,8 +115,12 @@ export async function execRaw(args: string[], cwd: string): Promise<RawCommandRe
   };
 }
 
-export async function exec(args: string[], cwd: string): Promise<CommandResult> {
-  const result = await execRaw(args, cwd);
+export async function exec(
+  args: string[],
+  cwd: string,
+  env: Record<string, string | undefined> = {},
+): Promise<CommandResult> {
+  const result = await execRaw(args, cwd, env);
   return {
     exitCode: result.exitCode,
     stderr: result.stderr.toString("utf8"),
@@ -493,13 +501,127 @@ export async function getFullGitStatus(repoPath: string): Promise<GitStatusResul
   }
 }
 
-async function resolveDefaultBranchForTrackedRead(repoPath: string): Promise<string> {
+/** Diagnostic-only capture: neither stream can retain more than its byte cap.
+ * Kill and cancel on overflow/read failure/deadline, then await the owned child.
+ * Ordinary Git execution deliberately retains its existing semantics.
+ */
+async function execDiagnosticTrackedRead(
+  args: string[],
+  cwd: string,
+  stdoutLimit = 64 * 1024,
+): Promise<Buffer> {
+  const proc = runtime.spawn(["git", ...args], {
+    cwd,
+    // Object inspection in partial clones must not fetch or update the object DB.
+    env: normalizeSpawnEnvironment({ ...process.env, GIT_NO_LAZY_FETCH: "1" }),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = proc.stdout.getReader();
+  const stderr = proc.stderr.getReader();
+  const failure = new Error("Failed bounded tracked configuration read");
+  const stop = () => {
+    proc.kill("SIGKILL");
+    void stdout.cancel().catch(() => {});
+    void stderr.cancel().catch(() => {});
+  };
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    stop();
+  }, 5000);
+  const capture = async (reader: typeof stdout, limit: number, retain: boolean) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw failure;
+      if (retain) chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, retain ? size : 0);
+  };
+  const captures = [capture(stdout, stdoutLimit, true), capture(stderr, 64 * 1024, false)];
   try {
-    const head = await exec(["symbolic-ref", "--short", "HEAD"], repoPath);
+    const [bytes, , code] = await Promise.all([captures[0]!, captures[1]!, proc.exited]);
+    if (expired || code !== 0 || proc.spawnError) throw failure;
+    return bytes;
+  } catch {
+    stop();
+    await Promise.allSettled([...captures, proc.exited]);
+    throw failure;
+  } finally {
+    clearTimeout(timer);
+    stdout.releaseLock();
+    stderr.releaseLock();
+  }
+}
+
+/** Returns null only for a successfully inspected empty selected tree entry.
+ * Pin the tree and blob OIDs, check actual object type/size, then bound raw bytes
+ * again during capture. Ref movement cannot swap content after size admission.
+ */
+export async function readTrackedFileForDiagnostics(
+  repoPath: string,
+  filePath: string,
+  maxBytes: number,
+): Promise<string | null> {
+  const runGit: typeof exec = async (args, cwd) => ({
+    stdout: (await execDiagnosticTrackedRead(args, cwd)).toString("utf8"),
+    stderr: "",
+    exitCode: 0,
+  });
+  const branch = await resolveDefaultBranchForTrackedRead(repoPath, runGit, true);
+  const tree = (
+    await runGit(["rev-parse", "--verify", `${branch}^{tree}`], repoPath)
+  ).stdout.trim();
+  const oidPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+  if (!oidPattern.test(tree)) throw new Error("Invalid tracked configuration tree");
+  const entry = (await runGit(["ls-tree", "-z", tree, "--", filePath], repoPath)).stdout;
+  if (entry === "") return null;
+  const entries = entry.split("\0");
+  const record = entries[0]!;
+  const tab = record.indexOf("\t");
+  const match = /^(?:100644|100755|120000) blob ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(
+    record.slice(0, tab),
+  );
+  if (entries.length !== 2 || entries[1] !== "" || !match || record.slice(tab + 1) !== filePath) {
+    throw new Error("Invalid tracked configuration entry");
+  }
+  const oid = match[1]!;
+  if ((await runGit(["cat-file", "-t", oid], repoPath)).stdout.trim() !== "blob") {
+    throw new Error("Invalid tracked configuration object");
+  }
+  const sizeText = (await runGit(["cat-file", "-s", oid], repoPath)).stdout.trim();
+  if (!/^(?:0|[1-9][0-9]*)$/.test(sizeText)) throw new Error("Invalid tracked configuration size");
+  const size = Number(sizeText);
+  if (!Number.isSafeInteger(size) || size > maxBytes)
+    throw new Error("Tracked configuration exceeds byte budget");
+  const bytes = await execDiagnosticTrackedRead(["cat-file", "-p", oid], repoPath, maxBytes);
+  if (bytes.length !== size) throw new Error("Invalid tracked configuration content size");
+  return bytes.toString("utf8");
+}
+
+async function resolveDefaultBranchForTrackedRead(
+  repoPath: string,
+  runGit: typeof exec = exec,
+  qualifiedRefs = false,
+): Promise<string> {
+  // Diagnostics retain branch identity through pinning even with a colliding tag.
+  try {
+    const head = await runGit(
+      qualifiedRefs ? ["symbolic-ref", "HEAD"] : ["symbolic-ref", "--short", "HEAD"],
+      repoPath,
+    );
     const branch = head.stdout.trim();
-    if (branch.length > 0) {
+    if (branch.length > 0 && (!qualifiedRefs || branch.startsWith("refs/heads/"))) {
       try {
-        await exec(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
+        await runGit(
+          ["show-ref", "--verify", qualifiedRefs ? branch : `refs/heads/${branch}`],
+          repoPath,
+        );
         return branch;
       } catch {
         // HEAD may reference an unset branch in a bare repository.
@@ -512,14 +634,15 @@ async function resolveDefaultBranchForTrackedRead(repoPath: string): Promise<str
 
   for (const branch of ["main", "master", "develop"]) {
     try {
-      await exec(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
-      return branch;
+      await runGit(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
+      return qualifiedRefs ? `refs/heads/${branch}` : branch;
     } catch {
       // Try next branch candidate
     }
   }
 
-  const refs = await exec(["for-each-ref", "--format=%(refname:short)", "refs/heads"], repoPath);
+  const refFormat = qualifiedRefs ? "--format=%(refname)" : "--format=%(refname:short)";
+  const refs = await runGit(["for-each-ref", refFormat, "refs/heads"], repoPath);
   const first = refs.stdout
     .split("\n")
     .map((value) => value.trim())
@@ -527,7 +650,7 @@ async function resolveDefaultBranchForTrackedRead(repoPath: string): Promise<str
 
   if (!first) {
     throw new ArashiError("Unable to resolve default branch for tracked file read", {
-      args: ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+      args: ["for-each-ref", refFormat, "refs/heads"],
       cwd: repoPath,
       exitCode: refs.exitCode,
       stderr: refs.stderr,

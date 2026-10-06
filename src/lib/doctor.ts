@@ -48,7 +48,8 @@ export type DoctorCategory =
   | "worktree"
   | "hook"
   | "shell"
-  | "install";
+  | "install"
+  | "t3";
 
 export interface DoctorFinding {
   code: string;

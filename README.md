@@ -84,6 +84,12 @@ For a single repository without persisted Arashi configuration, use `aw init --z
 
 Run `aw --help`, `aw <command> --help`, or use the [complete command reference](https://arashi.haphazard.dev/commands/) for options and examples.
 
+## T3 readiness
+
+Use `aw doctor --t3 --path /path/to/checkout` to preview T3 prerequisites without creating a task. A passing preview is not authenticated readiness. `--t3-authenticated` explicitly consents to administrative authentication and a temporary read session; cleanup failure or unverified cleanup exits `1`.
+
+See the [doctor command guide](https://arashi.haphazard.dev/commands/doctor/) for readiness options and results.
+
 ## Shell integration
 
 Install shell integration for parent-shell directory switching and completion in Bash, Zsh, or Fish:
