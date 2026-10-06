@@ -512,7 +512,8 @@ async function execDiagnosticTrackedRead(
 ): Promise<Buffer> {
   const proc = runtime.spawn(["git", ...args], {
     cwd,
-    env: normalizeSpawnEnvironment(process.env),
+    // Object inspection in partial clones must not fetch or update the object DB.
+    env: normalizeSpawnEnvironment({ ...process.env, GIT_NO_LAZY_FETCH: "1" }),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

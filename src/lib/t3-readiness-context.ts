@@ -2,7 +2,7 @@ import { dirname, join, resolve } from "node:path";
 import { constants } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { ArashiError } from "./errors.ts";
-import { exec } from "./git.ts";
+import { exec as execGit } from "./git.ts";
 import {
   getUserConfigPath,
   readUserConfigForDiagnostics,
@@ -29,6 +29,11 @@ interface CheckoutIdentity {
   primary: string;
   primaryBare: boolean;
 }
+
+// Disable partial-clone lazy fetching during root/ref discovery as well.
+// Preserve locale overrides and ordinary Git callers.
+const exec: typeof execGit = (args, cwd, env = {}) =>
+  execGit(args, cwd, { ...env, GIT_NO_LAZY_FETCH: "1" });
 
 // Git line output has one terminator; whitespace within a physical path is data.
 const gitLine = (value: string): string => value.replace(/\r?\n$/u, "");
