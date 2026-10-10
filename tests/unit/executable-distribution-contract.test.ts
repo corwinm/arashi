@@ -116,11 +116,12 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("workflow_dispatch");
     expect(workflow).toContain("release:verify-aw");
     const windowsJob = workflow.slice(workflow.indexOf("verify-aw-windows:"));
-    expect(windowsJob).toContain("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
+    const setupNode = /uses:\s+actions\/setup-node@[a-f0-9]{40}(?=\s|$)/u.exec(windowsJob);
+    expect(setupNode).not.toBeNull();
     expect(windowsJob).toContain("node-version: 24.18.0");
-    expect(
-      windowsJob.indexOf("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"),
-    ).toBeLessThan(windowsJob.indexOf("Verify public npm package"));
+    const verificationIndex = windowsJob.indexOf("Verify public npm package");
+    expect(verificationIndex).toBeGreaterThanOrEqual(0);
+    expect(setupNode!.index).toBeLessThan(verificationIndex);
   });
 
   test("hardens release pushes and automatically verifies a newly published version", () => {
