@@ -100,9 +100,14 @@ export const gitFetchUrlsMatch = async (input: {
   }
   const fetchCwd = input.fetchCwd ?? input.configuredCwd;
   const configured = await canonicalizeGitFetchUrl(input.configuredUrl, input.configuredCwd);
-  const stored = await Promise.all(
+  // A rejected URL must not leave another rewrite's Git process running in cwd.
+  const rewrites = await Promise.allSettled(
     input.fetchUrls.map((url) => canonicalizeGitFetchUrl(url, fetchCwd)),
   );
+  const stored = rewrites.map((result) => {
+    if (result.status === "rejected") throw result.reason;
+    return result.value;
+  });
   if (!stored.includes(configured)) {
     throw urlError("no fetch URL matches the configured URL", "mismatch");
   }
