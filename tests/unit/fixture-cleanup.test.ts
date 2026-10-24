@@ -18,10 +18,10 @@ for (const transient of [true, false]) {
         [
           "-e",
           transient
-            ? "process.stdout.write('ready'); setTimeout(() => process.exit(0), 200)"
+            ? "process.stdin.once('data', () => setTimeout(() => process.exit(0), 200)); process.stdout.write('ready')"
             : "process.stdout.write('ready'); setInterval(() => {}, 1000)",
         ],
-        { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
+        { cwd: root, stdio: ["pipe", "pipe", "pipe"] },
       );
       const closed = once(child, "close");
       try {
@@ -29,6 +29,7 @@ for (const transient of [true, false]) {
         // Calibrate the actual native lock before exercising the cleanup policy.
         expect(() => rmSync(root, { recursive: true })).toThrow();
         if (transient) {
+          child.stdin!.end("release");
           await removeTemporaryDirectory(root);
           expect(existsSync(root)).toBe(false);
         } else {
