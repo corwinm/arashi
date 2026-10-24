@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { canonicalizeGitFetchUrl, gitFetchUrlsMatch } from "../../src/lib/delete-git-url.ts";
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, symlink } from "node:fs/promises";
+import { removeTemporaryDirectory } from "../helpers/cleanup.ts";
 import { exec } from "../../src/lib/git.ts";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -17,7 +18,7 @@ const fixture = async (): Promise<string> => {
 
 afterEach(async () => {
   for (const root of roots.splice(0)) {
-    await rm(root, { force: true, recursive: true });
+    await removeTemporaryDirectory(root);
   }
 });
 

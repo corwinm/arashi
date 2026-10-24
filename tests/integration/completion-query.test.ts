@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
+import { removeTemporaryDirectory } from "../helpers/cleanup.ts";
 
 const temporaryDirectories: string[] = [];
 const cliPath = join(dirname(fileURLToPath(import.meta.url)), "../../src/index.ts");
@@ -30,8 +31,8 @@ const records = (stdout: Buffer) => {
   }));
 };
 
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true });
+afterEach(async () => {
+  for (const directory of temporaryDirectories.splice(0)) await removeTemporaryDirectory(directory);
 });
 
 describe("lossless bounded dynamic completion query", () => {
