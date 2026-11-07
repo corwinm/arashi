@@ -2263,12 +2263,12 @@ packages:
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
 
-  undici@6.29.0:
-    resolution: {integrity: sha512-R+RODBqp6i2pPflGdq+xIOUkl+RNfGgHwoinecKu/JCuf2uO06cOKoDbI2P7Dn6KcswdKwrczbU6IYJ6K8X+wg==}
+  undici@6.29.1:
+    resolution: {integrity: sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==}
     engines: {node: '>=18.17'}
 
-  undici@7.30.0:
-    resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   unicode-emoji-modifier-base@1.0.0:
@@ -2468,7 +2468,7 @@ snapshots:
   '@actions/http-client@4.0.1':
     dependencies:
       tunnel: 0.0.6
-      undici: 6.29.0
+      undici: 6.29.1
 
   '@actions/io@3.0.2': {}
 
@@ -3035,7 +3035,7 @@ snapshots:
       p-filter: 4.1.0
       semantic-release: 25.0.6(supports-color@7.2.0)(typescript@5.9.3)
       tinyglobby: 0.2.17
-      undici: 7.30.0
+      undici: 7.30.1
       url-join: 5.0.0
     transitivePeerDependencies:
       - kerberos
@@ -4398,9 +4398,9 @@ snapshots:
 
   undici-types@7.16.0: {}
 
-  undici@6.29.0: {}
+  undici@6.29.1: {}
 
-  undici@7.30.0: {}
+  undici@7.30.1: {}
 
   unicode-emoji-modifier-base@1.0.0: {}
 
