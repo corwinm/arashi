@@ -1,5 +1,6 @@
 overrides:
   "oxfmt@0.28.0>tinypool": "2.1.2"
+  "ts-json-schema-generator@2.4.0>glob": "14.0.2"
 
 allowBuilds:
   esbuild: true
